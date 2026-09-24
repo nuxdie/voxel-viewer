@@ -6,6 +6,7 @@
 #include "camera.h"
 #include "gl_loader.h"
 #include "mesher.h"
+#include "smooth_mesher.h"
 
 namespace vox {
 
@@ -24,6 +25,7 @@ public:
     void shutdown();
     // Replaces the GPU meshes. boundsMin/Max are inclusive voxel bounds.
     void upload(const std::vector<ChunkMesh>& meshes, IVec3 boundsMin, IVec3 boundsMax);
+    void upload(const std::vector<SmoothChunkMesh>& meshes, IVec3 boundsMin, IVec3 boundsMax);
     void render(const Camera& cam, int width, int height, const RenderSettings& s);
 
     size_t drawnTriangles() const { return drawnTriangles_; }
@@ -32,8 +34,13 @@ public:
 
 private:
     struct GpuMesh {
-        GLuint vao = 0, vbo = 0;
+        GLuint vao = 0, vbo = 0, ebo = 0;  // ebo is only owned by smooth meshes
         GLsizei indexCount = 0;
+    };
+    struct VoxelProgram {
+        GLuint id = 0;
+        GLint viewProj = -1, origin = -1, lightDir = -1, ao = -1, clipY = -1, eye = -1, fog = -1, fogColor = -1;
+        bool init(const char* vs, const char* fs);
     };
     struct GpuChunk {
         Vec3 origin;
@@ -42,9 +49,13 @@ private:
 
     void freeChunks();
     GpuMesh makeMesh(const std::vector<PackedVertex>& verts);
+    GpuMesh makeMesh(const SmoothMesh& mesh);
+    void beginUpload(IVec3 boundsMin, IVec3 boundsMax);
     void buildGrid();
 
-    GLuint voxelProg_ = 0, lineProg_ = 0, bgProg_ = 0;
+    VoxelProgram blockyProg_, smoothProg_;
+    bool smooth_ = false;
+    GLuint lineProg_ = 0, bgProg_ = 0;
     GLuint ebo_ = 0;
     size_t eboQuads_ = 0;
     GLuint emptyVao_ = 0;
@@ -57,8 +68,6 @@ private:
     size_t drawnTriangles_ = 0, totalTriangles_ = 0, gpuBytes_ = 0;
 
     // Uniform locations
-    GLint uViewProj_ = -1, uOrigin_ = -1, uLightDir_ = -1, uAo_ = -1, uClipY_ = -1, uEye_ = -1, uFog_ = -1,
-          uFogColor_ = -1;
     GLint uLineViewProj_ = -1, uLineColor_ = -1;
     GLint uBgTop_ = -1, uBgBottom_ = -1;
 };

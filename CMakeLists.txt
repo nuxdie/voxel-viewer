@@ -40,6 +40,7 @@ add_library(voxcore STATIC
   src/block_colors.cpp
   src/loader.cpp
   src/mesher.cpp
+  src/smooth_mesher.cpp
   src/image_writer.cpp
 )
 target_include_directories(voxcore PUBLIC src)
@@ -79,3 +80,7 @@ if(Python3_FOUND)
            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_samples.py
                    $<TARGET_FILE:voxinfo> ${CMAKE_CURRENT_BINARY_DIR}/samples)
 endif()
+
+add_executable(smooth_mesher_test tests/smooth_mesher_test.cpp)
+target_link_libraries(smooth_mesher_test PRIVATE voxcore)
+add_test(NAME smooth_mesher COMMAND smooth_mesher_test)

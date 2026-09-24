@@ -25,6 +25,8 @@ struct ChunkMesh {
 struct MeshOptions {
     bool hideDecorations = false;
     bool greedy = true;
+    bool smooth = false;         // use the smooth (surface nets) mesher instead of cubes
+    int smoothIterations = 8;    // relaxation passes for the smooth mesher
 };
 
 // Builds a mesh for every non-empty chunk, using all hardware threads.

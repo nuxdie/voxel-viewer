@@ -4,6 +4,7 @@ A fast OpenGL voxel viewer for Linux, written in C++17. It opens **MagicaVoxel**
 **Minecraft WorldEdit** schematics.
 
 ![screenshot](docs/screenshot.png)
+![smooth mesher](docs/screenshot-smooth.png)
 
 | Format | Extension | Notes |
 |---|---|---|
@@ -20,10 +21,19 @@ The viewer detects the format from the file's content, so the extension doesn't 
 - OpenGL 3.3 core. There are no dependencies beyond GLFW and zlib.
 - Voxels are stored sparsely in 32³ chunks. Chunks are meshed on all CPU cores using **greedy
   meshing** with per-vertex **ambient occlusion**. Each vertex is 8 bytes.
+- **Smooth mode** (press `M`, or start with `--smooth`) uses a second mesher based on
+  *constrained elastic surface nets*. It builds a surface over the voxel centers, then moves
+  each vertex toward its neighbors a number of times while keeping it inside its own cell.
+  Stair steps and hard edges become smooth curves with smooth normals. Features one voxel
+  thick (walls, pillars, one-voxel holes) keep their thickness, because vertices must stay a
+  margin away from the cell walls. `K` cycles the number of relaxation passes
+  (0 = chamfered, 16 = smoothest). The mesh is watertight across chunk borders; a test checks
+  this.
 - Chunks outside the view are skipped (frustum culling). Glass, water and ice are drawn in a
   separate alpha-blended pass, sorted back to front.
 - Tested with a 768×76×768 Sponge schematic of 26.6 million voxels: it loads in about 0.75 s,
-  meshes in about 0.2 s, and uses 33 MB of GPU memory.
+  meshes in about 0.2 s, and uses 33 MB of GPU memory. Smooth mode meshes the same map in
+  about 2.3 s and uses 109 MB.
 - Minecraft blocks are colored from a built-in table of average texture colors, covering
   about 400 blocks plus rules for dyed, wood, stone and copper variants. Unknown and modded
   blocks get a stable color derived from their name.
@@ -81,6 +91,8 @@ voxel-viewer [options] [file...]
   --screenshot FILE.png  render the first file to a PNG and exit
   --size WxH             window / screenshot size (default 1600x1000)
   --hide-decorations     hide torches, flowers, rails and other small blocks
+  --smooth               start with the smooth mesher (toggle with M)
+  --smooth-iterations N  smoothing passes, 0-16 (default 8)
   --no-ao                disable ambient occlusion
   --msaa N               multisample count (default 8, 0 to disable)
   --no-prime             do not request the NVIDIA GPU on hybrid-graphics laptops
@@ -101,6 +113,8 @@ To open files, pass them on the command line, **drag and drop** them onto the wi
 | `1` `2` `3` `4` | Front / right / top / isometric view |
 | `PgUp` / `PgDn` (+`Shift` for ×10) | Move the cut-away slice, to see inside buildings layer by layer |
 | `Home` | Remove the slice |
+| `M` | Switch between blocky cubes and the smooth mesh |
+| `K` | Cycle smoothness (0, 2, 4, 8, 16 relaxation passes) |
 | `V` | Show/hide small decorations (torches, flowers, rails, signs, ...) |
 | `G` / `B` / `X` / `O` / `L` | Grid / bounding box / wireframe / ambient occlusion / light background |
 | `F12` | Save a PNG screenshot to the current directory |
@@ -121,6 +135,7 @@ src/vox_loader.cpp       MagicaVoxel .vox
 src/schematic_loader.cpp .schematic / .schem / .litematic / structure .nbt
 src/block_colors.*       Minecraft block colors + legacy numeric ID table
 src/mesher.*             multithreaded greedy mesher with ambient occlusion
+src/smooth_mesher.*      multithreaded smooth mesher (constrained surface nets)
 src/renderer.*           OpenGL 3.3 renderer
 src/main.cpp             window, input, file handling (GLFW)
 tests/make_samples.py    writes the same build in every format; check_samples.py cross-checks the loaders

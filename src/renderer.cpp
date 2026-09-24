@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdio>
 
 namespace vox {
@@ -14,16 +15,41 @@ uniform mat4 uViewProj;
 uniform vec3 uOrigin;
 out vec4 vColor;
 out vec3 vWorld;
+out vec3 vNormal;
 out float vAo;
-flat out int vNormal;
 flat out int vEmissive;
+const vec3 kNormals[6] = vec3[6](vec3(1, 0, 0), vec3(-1, 0, 0), vec3(0, 1, 0),
+                                 vec3(0, -1, 0), vec3(0, 0, 1), vec3(0, 0, -1));
 void main() {
     vec3 p = vec3(aPos.xyz) + uOrigin;
     vWorld = p;
     vColor = aColor;
-    vNormal = int(aPos.w & 7u);
-    vAo = float((aPos.w >> 3) & 3u);
+    vNormal = kNormals[int(aPos.w & 7u)];
+    vAo = pow(float((aPos.w >> 3) & 3u) / 3.0, 1.3) * 0.75 + 0.25;
     vEmissive = int((aPos.w >> 5) & 1u);
+    gl_Position = uViewProj * vec4(p, 1.0);
+}
+)";
+
+const char* kSmoothVs = R"(#version 330 core
+layout(location = 0) in vec3 aPos;      // chunk-local fixed point: p / 1024 - 2
+layout(location = 1) in vec3 aNormal;   // normalized snorm8
+layout(location = 2) in uint aAoEmissive;
+layout(location = 3) in vec4 aColor;
+uniform mat4 uViewProj;
+uniform vec3 uOrigin;
+out vec4 vColor;
+out vec3 vWorld;
+out vec3 vNormal;
+out float vAo;
+flat out int vEmissive;
+void main() {
+    vec3 p = aPos / 1024.0 - 2.0 + uOrigin;
+    vWorld = p;
+    vColor = aColor;
+    vNormal = aNormal;
+    vAo = float(aAoEmissive & 127u) / 127.0;
+    vEmissive = int(aAoEmissive >> 7);
     gl_Position = uViewProj * vec4(p, 1.0);
 }
 )";
@@ -31,8 +57,8 @@ void main() {
 const char* kVoxelFs = R"(#version 330 core
 in vec4 vColor;
 in vec3 vWorld;
+in vec3 vNormal;
 in float vAo;
-flat in int vNormal;
 flat in int vEmissive;
 uniform vec3 uLightDir;
 uniform float uAoStrength;
@@ -41,8 +67,6 @@ uniform vec3 uEye;
 uniform float uFog;        // 1 / fog distance
 uniform vec3 uFogColor;
 out vec4 fragColor;
-const vec3 kNormals[6] = vec3[6](vec3(1, 0, 0), vec3(-1, 0, 0), vec3(0, 1, 0),
-                                 vec3(0, -1, 0), vec3(0, 0, 1), vec3(0, 0, -1));
 void main() {
     if (vWorld.y > uClipY) discard;
     vec3 base = pow(vColor.rgb, vec3(2.2));
@@ -50,10 +74,11 @@ void main() {
     if (vEmissive != 0) {
         lit = base * 1.15;
     } else {
-        vec3 n = kNormals[vNormal];
+        vec3 n = normalize(vNormal);
+        if (!gl_FrontFacing) n = -n;
         float sun = max(dot(n, uLightDir), 0.0);
         float sky = 0.5 + 0.5 * n.y;
-        float ao = mix(1.0, pow(vAo / 3.0, 1.3) * 0.75 + 0.25, uAoStrength);
+        float ao = mix(1.0, vAo, uAoStrength);
         vec3 light = vec3(1.0, 0.97, 0.9) * sun * 0.75 + vec3(0.62, 0.68, 0.8) * (0.25 + 0.35 * sky);
         lit = base * light * ao;
     }
@@ -152,20 +177,26 @@ bool boxVisible(const std::array<std::array<float, 4>, 6>& planes, const Vec3& m
 
 }  // namespace
 
+bool Renderer::VoxelProgram::init(const char* vs, const char* fs) {
+    id = link(vs, fs);
+    if (!id) return false;
+    viewProj = glGetUniformLocation(id, "uViewProj");
+    origin = glGetUniformLocation(id, "uOrigin");
+    lightDir = glGetUniformLocation(id, "uLightDir");
+    ao = glGetUniformLocation(id, "uAoStrength");
+    clipY = glGetUniformLocation(id, "uClipY");
+    eye = glGetUniformLocation(id, "uEye");
+    fog = glGetUniformLocation(id, "uFog");
+    fogColor = glGetUniformLocation(id, "uFogColor");
+    return true;
+}
+
 bool Renderer::init() {
-    voxelProg_ = link(kVoxelVs, kVoxelFs);
     lineProg_ = link(kLineVs, kLineFs);
     bgProg_ = link(kBgVs, kBgFs);
-    if (!voxelProg_ || !lineProg_ || !bgProg_) return false;
+    if (!blockyProg_.init(kVoxelVs, kVoxelFs) || !smoothProg_.init(kSmoothVs, kVoxelFs) || !lineProg_ || !bgProg_)
+        return false;
 
-    uViewProj_ = glGetUniformLocation(voxelProg_, "uViewProj");
-    uOrigin_ = glGetUniformLocation(voxelProg_, "uOrigin");
-    uLightDir_ = glGetUniformLocation(voxelProg_, "uLightDir");
-    uAo_ = glGetUniformLocation(voxelProg_, "uAoStrength");
-    uClipY_ = glGetUniformLocation(voxelProg_, "uClipY");
-    uEye_ = glGetUniformLocation(voxelProg_, "uEye");
-    uFog_ = glGetUniformLocation(voxelProg_, "uFog");
-    uFogColor_ = glGetUniformLocation(voxelProg_, "uFogColor");
     uLineViewProj_ = glGetUniformLocation(lineProg_, "uViewProj");
     uLineColor_ = glGetUniformLocation(lineProg_, "uColor");
     uBgTop_ = glGetUniformLocation(bgProg_, "uTop");
@@ -187,6 +218,7 @@ void Renderer::freeChunks() {
     for (auto& c : chunks_)
         for (GpuMesh* m : {&c.opaque, &c.transparent}) {
             if (m->vbo) glDeleteBuffers(1, &m->vbo);
+            if (m->ebo) glDeleteBuffers(1, &m->ebo);
             if (m->vao) glDeleteVertexArrays(1, &m->vao);
         }
     chunks_.clear();
@@ -200,7 +232,7 @@ void Renderer::shutdown() {
     if (lineVbo_) glDeleteBuffers(1, &lineVbo_);
     if (lineVao_) glDeleteVertexArrays(1, &lineVao_);
     if (emptyVao_) glDeleteVertexArrays(1, &emptyVao_);
-    for (GLuint p : {voxelProg_, lineProg_, bgProg_})
+    for (GLuint p : {blockyProg_.id, smoothProg_.id, lineProg_, bgProg_})
         if (p) glDeleteProgram(p);
 }
 
@@ -224,11 +256,16 @@ Renderer::GpuMesh Renderer::makeMesh(const std::vector<PackedVertex>& verts) {
     return m;
 }
 
-void Renderer::upload(const std::vector<ChunkMesh>& meshes, IVec3 bmin, IVec3 bmax) {
+void Renderer::beginUpload(IVec3 bmin, IVec3 bmax) {
     freeChunks();
     bmin_ = bmin;
     bmax_ = bmax;
     hasModel_ = true;
+}
+
+void Renderer::upload(const std::vector<ChunkMesh>& meshes, IVec3 bmin, IVec3 bmax) {
+    beginUpload(bmin, bmax);
+    smooth_ = false;
 
     // Shared quad index buffer, large enough for the biggest chunk mesh.
     size_t maxQuads = 1;
@@ -255,6 +292,47 @@ void Renderer::upload(const std::vector<ChunkMesh>& meshes, IVec3 bmin, IVec3 bm
         chunks_.push_back(c);
     }
     buildGrid();
+}
+
+void Renderer::upload(const std::vector<SmoothChunkMesh>& meshes, IVec3 bmin, IVec3 bmax) {
+    beginUpload(bmin, bmax);
+    smooth_ = true;
+    chunks_.reserve(meshes.size());
+    for (const auto& m : meshes) {
+        GpuChunk c;
+        c.origin = Vec3(float(m.chunk.x * kChunkSize), float(m.chunk.y * kChunkSize), float(m.chunk.z * kChunkSize));
+        c.opaque = makeMesh(m.opaque);
+        c.transparent = makeMesh(m.transparent);
+        chunks_.push_back(c);
+    }
+    buildGrid();
+}
+
+Renderer::GpuMesh Renderer::makeMesh(const SmoothMesh& mesh) {
+    GpuMesh m;
+    if (mesh.indices.empty()) return m;
+    glGenVertexArrays(1, &m.vao);
+    glGenBuffers(1, &m.vbo);
+    glGenBuffers(1, &m.ebo);
+    glBindVertexArray(m.vao);
+    glBindBuffer(GL_ARRAY_BUFFER, m.vbo);
+    glBufferData(GL_ARRAY_BUFFER, GLsizeiptr(mesh.vertices.size() * sizeof(SmoothVertex)), mesh.vertices.data(), GL_STATIC_DRAW);
+    const GLsizei stride = sizeof(SmoothVertex);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_UNSIGNED_SHORT, GL_FALSE, stride, reinterpret_cast<void*>(offsetof(SmoothVertex, x)));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_BYTE, GL_TRUE, stride, reinterpret_cast<void*>(offsetof(SmoothVertex, nx)));
+    glEnableVertexAttribArray(2);
+    glVertexAttribIPointer(2, 1, GL_UNSIGNED_BYTE, stride, reinterpret_cast<void*>(offsetof(SmoothVertex, aoEmissive)));
+    glEnableVertexAttribArray(3);
+    glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, stride, reinterpret_cast<void*>(offsetof(SmoothVertex, r)));
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m.ebo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, GLsizeiptr(mesh.indices.size() * sizeof(uint32_t)), mesh.indices.data(), GL_STATIC_DRAW);
+    glBindVertexArray(0);
+    m.indexCount = GLsizei(mesh.indices.size());
+    gpuBytes_ += mesh.vertices.size() * sizeof(SmoothVertex) + mesh.indices.size() * sizeof(uint32_t);
+    totalTriangles_ += mesh.indices.size() / 3;
+    return m;
 }
 
 void Renderer::buildGrid() {
@@ -312,17 +390,19 @@ void Renderer::render(const Camera& cam, int width, int height, const RenderSett
     auto planes = frustumPlanes(vp);
     Vec3 eye = cam.eye();
 
-    glUseProgram(voxelProg_);
-    glUniformMatrix4fv(uViewProj_, 1, GL_FALSE, vp.m);
+    const VoxelProgram& prog = smooth_ ? smoothProg_ : blockyProg_;
+    glUseProgram(prog.id);
+    glUniformMatrix4fv(prog.viewProj, 1, GL_FALSE, vp.m);
     Vec3 light = normalize(Vec3(0.45f, 0.85f, 0.3f));
-    glUniform3f(uLightDir_, light.x, light.y, light.z);
-    glUniform1f(uAo_, s.aoStrength);
-    glUniform1f(uClipY_, s.clipY);
-    glUniform3f(uEye_, eye.x, eye.y, eye.z);
-    glUniform1f(uFog_, 1.0f / (cam.sceneRadius() * 6.0f + 50.0f));
-    glUniform3f(uFogColor_, (bgTop.x + bgBottom.x) * 0.5f, (bgTop.y + bgBottom.y) * 0.5f, (bgTop.z + bgBottom.z) * 0.5f);
+    glUniform3f(prog.lightDir, light.x, light.y, light.z);
+    glUniform1f(prog.ao, s.aoStrength);
+    glUniform1f(prog.clipY, s.clipY);
+    glUniform3f(prog.eye, eye.x, eye.y, eye.z);
+    glUniform1f(prog.fog, 1.0f / (cam.sceneRadius() * 6.0f + 50.0f));
+    glUniform3f(prog.fogColor, (bgTop.x + bgBottom.x) * 0.5f, (bgTop.y + bgBottom.y) * 0.5f, (bgTop.z + bgBottom.z) * 0.5f);
 
-    glEnable(GL_CULL_FACE);
+    // Relaxed smooth meshes can contain a few folded triangles, so draw them two-sided.
+    if (!smooth_) glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
     if (s.wireframe) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 
@@ -331,9 +411,9 @@ void Renderer::render(const Camera& cam, int width, int height, const RenderSett
     const float cs = float(kChunkSize);
     for (const GpuChunk& c : chunks_) {
         if (c.origin.y > s.clipY) continue;
-        if (!boxVisible(planes, c.origin, c.origin + Vec3(cs, cs, cs))) continue;
+        if (!boxVisible(planes, c.origin - Vec3(1, 1, 1), c.origin + Vec3(cs + 2, cs + 2, cs + 2))) continue;
         if (c.opaque.indexCount) {
-            glUniform3f(uOrigin_, c.origin.x, c.origin.y, c.origin.z);
+            glUniform3f(prog.origin, c.origin.x, c.origin.y, c.origin.z);
             glBindVertexArray(c.opaque.vao);
             glDrawElements(GL_TRIANGLES, c.opaque.indexCount, GL_UNSIGNED_INT, nullptr);
             drawnTriangles_ += size_t(c.opaque.indexCount / 3);
@@ -352,7 +432,7 @@ void Renderer::render(const Camera& cam, int width, int height, const RenderSett
         glDepthMask(GL_FALSE);
         for (auto& t : transparent) {
             const GpuChunk& c = *t.second;
-            glUniform3f(uOrigin_, c.origin.x, c.origin.y, c.origin.z);
+            glUniform3f(prog.origin, c.origin.x, c.origin.y, c.origin.z);
             glBindVertexArray(c.transparent.vao);
             glDrawElements(GL_TRIANGLES, c.transparent.indexCount, GL_UNSIGNED_INT, nullptr);
             drawnTriangles_ += size_t(c.transparent.indexCount / 3);
