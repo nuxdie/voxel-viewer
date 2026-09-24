@@ -342,8 +342,73 @@ std::string baseBlockName(const std::string& state) {
     return n;
 }
 
+// Color lookup only (no light or surface properties); defined below.
+BlockInfo lookupBlockColor(const std::string& baseName);
+
+namespace {
+
+// Light levels from the Minecraft wiki (Java edition, default block states).
+uint8_t lightLevel(const std::string& n) {
+    static const std::unordered_map<std::string, uint8_t> levels = {
+        {"torch", 14}, {"wall_torch", 14}, {"soul_torch", 10}, {"soul_wall_torch", 10},
+        {"redstone_torch", 7}, {"redstone_wall_torch", 7}, {"lantern", 15}, {"soul_lantern", 10},
+        {"glowstone", 15}, {"sea_lantern", 15}, {"jack_o_lantern", 15}, {"shroomlight", 15},
+        {"ochre_froglight", 15}, {"verdant_froglight", 15}, {"pearlescent_froglight", 15},
+        {"beacon", 15}, {"conduit", 15}, {"end_rod", 14}, {"end_gateway", 15}, {"end_portal", 15},
+        {"fire", 15}, {"soul_fire", 10}, {"campfire", 15}, {"soul_campfire", 10}, {"lava", 15},
+        {"magma_block", 3}, {"crying_obsidian", 10}, {"nether_portal", 11}, {"respawn_anchor", 15},
+        {"redstone_lamp", 0}, {"sea_pickle", 6}, {"glow_lichen", 7}, {"brewing_stand", 1},
+        {"brown_mushroom", 1}, {"dragon_egg", 1}, {"end_portal_frame", 1}, {"sculk_sensor", 1},
+        {"enchanting_table", 7}, {"ender_chest", 7}, {"amethyst_cluster", 5}, {"cave_vines", 14},
+        {"cave_vines_plant", 14}, {"light", 15}, {"copper_bulb", 15}, {"trial_spawner", 4}, {"vault", 6},
+    };
+    auto it = levels.find(n);
+    if (it != levels.end()) return it->second;
+    if (n.find("candle") != std::string::npos) return 3;
+    if (n.find("copper_bulb") != std::string::npos) return n.find("oxidized") != std::string::npos ? 4 : 12;
+    return 0;
+}
+
+// Surface finish for reflections.
+void surface(const std::string& n, BlockInfo& b) {
+    auto has = [&](const char* s) { return n.find(s) != std::string::npos; };
+    if (n == "water" || n == "bubble_column") { b.roughness = 8; return; }
+    if (has("glass")) { b.roughness = 12; return; }
+    if (n == "ice" || n == "packed_ice" || n == "blue_ice" || n == "frosted_ice") { b.roughness = 30; return; }
+    static const char* metals[] = {"iron_block", "gold_block", "diamond_block", "emerald_block", "netherite_block",
+                                   "raw_iron_block", "raw_gold_block", "lapis_block", "iron_bars", "iron_door",
+                                   "iron_trapdoor", "chain", "anvil", "bell", "heavy_core"};
+    for (const char* m : metals)
+        if (has(m)) {
+            b.metallic = has("raw_") || n == "lapis_block" ? 0 : 255;
+            b.roughness = has("raw_") ? 150 : n == "diamond_block" || n == "emerald_block" ? 45 : 70;
+            return;
+        }
+    if (has("copper") && !has("ore")) {
+        b.metallic = 255;
+        b.roughness = has("oxidized") || has("weathered") ? 180 : has("waxed") ? 55 : 80;
+        return;
+    }
+    if (has("glazed_terracotta") || has("prismarine") || n == "slime_block" || n == "honey_block") b.roughness = 70;
+    else if (has("polished_") || has("quartz") || has("smooth_") || has("concrete") || has("obsidian") ||
+             has("purpur") || (has("_bricks") && has("deepslate")))
+        b.roughness = 120;
+}
+
+}  // namespace
+
 BlockInfo lookupBlock(const std::string& state) {
     std::string n = baseBlockName(state);
+    BlockInfo b = lookupBlockColor(n);
+    if (!b.invisible) {
+        b.emission = lightLevel(n);
+        if (b.emission) b.flags |= kMatEmissive;
+        surface(n, b);
+    }
+    return b;
+}
+
+BlockInfo lookupBlockColor(const std::string& n) {
     BlockInfo b;
     if (n.empty() || n == "air" || n == "cave_air" || n == "void_air" || n == "structure_void" || n == "barrier" ||
         n == "light" || n == "moving_piston") {

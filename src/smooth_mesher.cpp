@@ -1,5 +1,7 @@
 #include "smooth_mesher.h"
 
+#include "light_field.h"
+
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -19,6 +21,8 @@ struct Context {
     std::vector<uint16_t> remap;  // palette index -> palette index (0 hides it)
     std::vector<uint8_t> kind;
     int iterations;
+    std::vector<uint8_t> blocksLight;
+    const LightField* light = nullptr;
 };
 
 // Per-thread scratch buffers.
@@ -29,6 +33,7 @@ struct Work {
     int cmin = 0;    // first cell (min corner, chunk-local)
     int C = 0;       // cell grid size
     std::vector<uint16_t> vox;  // material per voxel, padded
+    std::vector<uint16_t> light;  // block light per voxel, padded (same layout)
     std::vector<int32_t> cellVert;
     std::vector<float> pos, next, nrm;
     std::vector<int32_t> vertCell;
@@ -42,6 +47,7 @@ struct Work {
         cmin = -1 - K;
         C = N + 1 + 2 * K;  // cells [-1-K, 31+K]
         vox.assign(size_t(S) * S * S, 0);
+        light.assign(size_t(S) * S * S, 0);
         cellVert.assign(size_t(C) * C * C, -1);
     }
     int vi(int x, int y, int z) const { return ((y + pad) * S + (z + pad)) * S + (x + pad); }
@@ -246,6 +252,27 @@ void meshLayer(const Context& ctx, Work& w, uint8_t layer, SmoothMesh& out) {
         sv.g = mat.color.g;
         sv.b = mat.color.b;
         sv.a = layer == kTransparent ? mat.color.a : 255;
+        sv.surface = packSurface(mat);
+        sv.pad = 0;
+        // Block light: average over the cell's corners that let light through.
+        if (ctx.light) {
+            int lr = 0, lg = 0, lb = 0, ln = 0;
+            for (int k = 0; k < 8; ++k) {
+                int x = c[0] + (k & 1), y = c[1] + ((k >> 1) & 1), z = c[2] + ((k >> 2) & 1);
+                size_t vi = size_t(w.vi(x, y, z));
+                if (ctx.blocksLight[w.vox[vi]]) continue;
+                uint16_t lv = w.light[vi];
+                lr += lightR(lv);
+                lg += lightG(lv);
+                lb += lightB(lv);
+                ++ln;
+            }
+            if (ln) {
+                sv.lr = uint8_t(lr * 17 / ln);
+                sv.lg = uint8_t(lg * 17 / ln);
+                sv.lb = uint8_t(lb * 17 / ln);
+            }
+        }
         bool emissive = (mat.flags & kMatEmissive) != 0;
 
         // Ambient occlusion: how enclosed the vertex is by opaque voxels in a 4x4x4 neighborhood.
@@ -263,7 +290,7 @@ void meshLayer(const Context& ctx, Work& w, uint8_t layer, SmoothMesh& out) {
 }  // namespace
 
 std::vector<SmoothChunkMesh> buildSmoothMeshes(const VoxelModel& model, const MeshOptions& opts, int iterations) {
-    Context ctx{model, {}, {}, std::clamp(iterations, 0, kMaxSmoothIterations)};
+    Context ctx{model, {}, {}, std::clamp(iterations, 0, kMaxSmoothIterations), {}, nullptr};
     size_t n = model.materials.size();
     ctx.remap.resize(n);
     ctx.kind.resize(n);
@@ -273,6 +300,9 @@ std::vector<SmoothChunkMesh> buildSmoothMeshes(const VoxelModel& model, const Me
         ctx.remap[i] = hidden ? 0 : uint16_t(i);
         ctx.kind[i] = hidden ? kAir : (m.flags & kMatTransparent) ? kTransparent : kOpaque;
     }
+    ctx.blocksLight.resize(n);
+    for (size_t i = 0; i < n; ++i) ctx.blocksLight[i] = i != 0 && blocksLight(model.materials[i]);
+    ctx.light = model.light.get();
 
     // A chunk's surface can touch voxels in the next chunk, so mesh empty neighbors too.
     std::vector<IVec3> coords;
@@ -301,6 +331,7 @@ std::vector<SmoothChunkMesh> buildSmoothMeshes(const VoxelModel& model, const Me
             SmoothChunkMesh& m = meshes[k];
             m.chunk = coords[k];
             fillVoxels(ctx, coords[k], w);
+            if (ctx.light) ctx.light->fillPadded(coords[k], w.pad, w.light.data());
             bool any[3] = {false, false, false};
             for (uint16_t v : w.vox) any[ctx.kind[v]] = true;
             if (any[kOpaque]) meshLayer(ctx, w, kOpaque, m.opaque);

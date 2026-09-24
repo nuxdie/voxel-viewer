@@ -27,8 +27,13 @@ enum MaterialFlags : uint8_t {
 struct Material {
     Color color;
     uint8_t flags = 0;
-    std::string name;  // e.g. "minecraft:stone" or "#12" for .vox palette entries
+    std::string name;       // e.g. "minecraft:stone" or "#12" for .vox palette entries
+    uint8_t emission = 0;   // block light it emits, 0-15 (Minecraft light levels)
+    uint8_t roughness = 230;  // 0 = mirror, 255 = fully matte
+    uint8_t metallic = 0;   // 0 = dielectric, 255 = metal
 };
+
+class LightField;
 
 struct IVec3 {
     int x = 0, y = 0, z = 0;
@@ -104,7 +109,9 @@ public:
     }
 
     std::vector<Material> materials;
-    std::string format;  // human readable source format, e.g. "MagicaVoxel .vox (v150)"
+    std::string format;
+    // Block light flooded from emissive voxels; computed after loading (see light_field.h).
+    std::shared_ptr<const LightField> light;  // human readable source format, e.g. "MagicaVoxel .vox (v150)"
 
 private:
     void growBounds(int x, int y, int z) {

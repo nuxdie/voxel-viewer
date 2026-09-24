@@ -79,6 +79,7 @@ struct Viewer {
                         " · " + formatCount(model->voxelCount()) + " voxels · " + kModeNames[mode];
         if (clipLayer != INT32_MAX) t += " · slice y≤" + std::to_string(clipLayer);
         if (opts.hideDecorations) t += " · no decorations";
+        if (settings.night) t += " · night";
         if (job.valid() || loadJob.valid()) t += " · working…";
         setStatus(t);
     }
@@ -274,6 +275,11 @@ JNI(void, nativeSlice)(JNIEnv*, jclass, jint delta) {
 }
 
 JNI(void, nativeClearSlice)(JNIEnv*, jclass) { g->setClip(INT32_MAX); }
+
+JNI(void, nativeToggleNight)(JNIEnv*, jclass) {
+    g->settings.night = !g->settings.night;
+    g->updateStatus();
+}
 
 JNI(void, nativeToggleDecorations)(JNIEnv*, jclass) {
     g->opts.hideDecorations = !g->opts.hideDecorations;

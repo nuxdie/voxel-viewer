@@ -22,6 +22,7 @@ final class NativeLib {
     static native void nativeSlice(int delta);
     static native void nativeClearSlice();
     static native void nativeToggleDecorations();
+    static native void nativeToggleNight();
     /** Thread-safe; may be called from the UI thread. */
     static native String nativeStatus();
 }

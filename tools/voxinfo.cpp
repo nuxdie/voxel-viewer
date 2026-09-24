@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <map>
 
+#include "light_field.h"
 #include "loader.h"
 #include "mesher.h"
 #include "smooth_mesher.h"
@@ -49,6 +50,9 @@ int main(int argc, char** argv) {
                         model->materials.size() - 1, chunks, quads, tquads,
                         std::chrono::duration<double, std::milli>(t1 - t0).count(),
                         std::chrono::duration<double, std::milli>(t2 - t1).count());
+            if (model->light)
+                std::printf("  lights:    %zu emitting voxels, %zu chunks lit\n", model->light->emitterCount(),
+                            model->light->litChunkCount());
             // Most common materials.
             std::map<uint16_t, size_t> counts;
             for (const auto& kv : model->chunks())

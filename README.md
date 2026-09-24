@@ -30,6 +30,25 @@ The viewer detects the format from the file's content, so the extension doesn't 
   ground bounce scaled by ambient occlusion; haze toward the horizon; and one tone curve. The
   scene sits under a sky gradient; `L` switches to a dark studio backdrop, `J` toggles
   shadows, and `O` toggles ambient occlusion.
+- **Light-emitting blocks** light up their surroundings. Minecraft blocks use their real light
+  levels (torch 14, glowstone/lantern/sea lantern/froglights 15, soul torch 10, and so on).
+  MagicaVoxel `_emit` materials get a level from their `_emit` strength and `_flux`. Light
+  spreads Minecraft-style when a file is loaded: it loses one level per block, is stopped by
+  solid blocks, and passes through glass, water and small decorations. It is colored by the
+  emitter, so soul lanterns throw blue light and froglights their own tint. The meshes carry
+  the result per vertex, smoothed across corners like Minecraft's smooth lighting, so it
+  costs nothing per frame and works on Android. Press `N` (or `--night`) for moonlight, which
+  lets the lights carry the scene.
+- **Reflections**: every material has a roughness and a metal flag. Water, glass and ice are
+  near-mirrors. Iron, gold, diamond, emerald, netherite and copper blocks are metals (copper
+  gets rougher as it oxidizes). Polished and glazed blocks have a slight sheen. MagicaVoxel
+  `_metal` and `_glass` materials keep their own `_metal` and `_rough` values. Surfaces
+  reflect the sky, with a Fresnel boost at grazing angles, and show a sun highlight. Metals
+  tint the reflection with their own color. Water and glass get more opaque where they
+  reflect more. Only the sky is reflected, not other objects: that would need screen-space
+  reflections.
+  `tests/make_samples.py` writes `courtyard.schem` (lights, a pond, glass and metal pillars) to
+  try all of this.
 - Voxels are stored sparsely in 32³ chunks. Chunks are meshed on all CPU cores using **greedy
   meshing** with per-vertex **ambient occlusion**. Each vertex is 8 bytes.
 - **Smooth mode** (press `M`, or start with `--smooth`) uses a second mesher based on
@@ -81,10 +100,12 @@ Open it on the phone and allow installing from unknown sources. It needs Android
 and OpenGL ES 3.0, which practically every phone since 2014 has. Builds are signed with the
 same key every time, so a newer APK installs over the old one.
 
-- **Open** opens the file picker, or loads one of the bundled samples (a forest and a house).
+- **Open** opens the file picker, or loads one of the bundled samples (a forest, a lit
+  courtyard and a house).
   You can also open `.vox`/`.schem` files from a file manager with "Open with → Voxel Viewer".
 - **Mode** cycles Blocks → Smooth → Painted → Watercolor.
 - **Slice − / Slice + / All** control the cut-away slice. **Decor** hides small blocks.
+  **Night** switches to moonlight.
   **Reset** re-frames the model.
 - Drag with one finger to orbit. Pinch to zoom, drag with two fingers to pan, and double
   tap to reset the view.
@@ -146,6 +167,7 @@ voxel-viewer [options] [file...]
   --no-ao                disable ambient occlusion
   --no-shadows           disable sun shadows
   --dark                 dark studio background instead of the sky
+  --night                start at night (moonlight; light-emitting blocks stand out)
   --msaa N               multisample count (default 8, 0 to disable)
   --no-prime             do not request the NVIDIA GPU on hybrid-graphics laptops
 ```
@@ -171,6 +193,7 @@ To open files, pass them on the command line, **drag and drop** them onto the wi
 | `V` | Show/hide small decorations (torches, flowers, rails, signs, ...) |
 | `G` / `B` / `X` / `O` | Grid / bounding box / wireframe / ambient occlusion |
 | `J` / `L` | Sun shadows on/off / sky or dark studio background |
+| `N` | Day / night |
 | `F12` | Save a PNG screenshot to the current directory |
 | `H` | Print help · `Esc` quits |
 
@@ -191,6 +214,7 @@ src/block_colors.*       Minecraft block colors + legacy numeric ID table
 src/mesher.*             multithreaded greedy mesher with ambient occlusion
 src/smooth_mesher.*      multithreaded smooth mesher (constrained surface nets)
 src/splats.*             surface voxel splats for the painted and watercolor modes
+src/light_field.*        block light flood fill from light-emitting voxels
 src/renderer.*           OpenGL 3.3 / OpenGL ES 3.0 renderer
 src/main.cpp             window, input, file handling (GLFW)
 android/                 Android app (Java UI + JNI bridge to the same engine)

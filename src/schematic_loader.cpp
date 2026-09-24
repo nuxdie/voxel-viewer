@@ -27,7 +27,11 @@ public:
         if (!info.invisible) {
             if (model_.materials.size() >= 65535) throw std::runtime_error("too many distinct blocks");
             idx = uint16_t(model_.materials.size());
-            model_.materials.push_back(Material{info.color, info.flags, "minecraft:" + base});
+            Material m{info.color, info.flags, "minecraft:" + base};
+            m.emission = info.emission;
+            m.roughness = info.roughness;
+            m.metallic = info.metallic;
+            model_.materials.push_back(m);
         }
         byName_[base] = idx;
         return idx;

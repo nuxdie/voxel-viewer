@@ -13,12 +13,14 @@
 
 namespace vox {
 
-// 16 bytes per vertex. Position is chunk-local fixed point: local = x / 1024 - 2.
+// 20 bytes per vertex. Position is chunk-local fixed point: local = x / 1024 - 2.
 struct SmoothVertex {
     uint16_t x, y, z;
     int8_t nx, ny, nz;
     uint8_t aoEmissive;  // bits 0-6: ambient light 0..127, bit 7: emissive
     uint8_t r, g, b, a;
+    uint8_t lr, lg, lb;  // block light, 0-255 (light level * 17)
+    uint8_t surface;     // see packSurface()
     uint16_t pad;
 };
 

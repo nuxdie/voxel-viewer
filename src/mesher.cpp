@@ -1,5 +1,8 @@
 #include "mesher.h"
 
+#include "light_field.h"
+
+#include <algorithm>
 #include <atomic>
 #include <cstdlib>
 #include <thread>
@@ -27,6 +30,8 @@ struct Context {
     const VoxelModel& model;
     std::vector<uint16_t> remap;  // palette index -> palette index (0 hides it)
     std::vector<uint8_t> kind;
+    std::vector<uint8_t> blocksLight;  // per palette index
+    const LightField* light = nullptr;
 };
 
 inline int pidx(int x, int y, int z) { return ((y + 1) * P + (z + 1)) * P + (x + 1); }
@@ -51,7 +56,7 @@ void fillPadded(const Context& ctx, IVec3 cc, uint16_t* pad) {
 }
 
 void emitQuad(std::vector<PackedVertex>& out, const Dir& d, int plane, int i, int j, int w, int h,
-              const uint8_t ao[4], const Material& m, bool emissive, uint8_t dirIndex) {
+              const uint8_t ao[4], const uint32_t light[4], const Material& m, bool emissive, uint8_t dirIndex) {
     // Choose the triangulation diagonal that isolates the odd corner to avoid AO anisotropy.
     bool flip = std::abs(ao[0] - ao[2]) > std::abs(ao[1] - ao[3]);
     for (int k = 0; k < 4; ++k) {
@@ -69,12 +74,23 @@ void emitQuad(std::vector<PackedVertex>& out, const Dir& d, int plane, int i, in
         v.g = m.color.g;
         v.b = m.color.b;
         v.a = (m.flags & kMatTransparent) ? m.color.a : 255;
+        v.lr = uint8_t(light[c]);
+        v.lg = uint8_t(light[c] >> 8);
+        v.lb = uint8_t(light[c] >> 16);
+        v.surface = packSurface(m);
         out.push_back(v);
     }
 }
 
-void meshChunk(const Context& ctx, IVec3 cc, uint16_t* pad, uint32_t* mask, bool greedy, ChunkMesh& out) {
+// Mask entry for greedy meshing. Faces merge only when material, AO and block light all match.
+constexpr uint64_t kValid = 1ull << 24;
+constexpr uint64_t kNonUniform = 1ull << 49;
+
+void meshChunk(const Context& ctx, IVec3 cc, uint16_t* pad, uint16_t* lightPad, uint64_t* mask, uint32_t* corners,
+               bool greedy, ChunkMesh& out) {
     fillPadded(ctx, cc, pad);
+    const bool lit = ctx.light != nullptr;
+    if (lit) ctx.light->fillPadded(cc, 1, lightPad);
     out.chunk = cc;
     const auto& kind = ctx.kind;
 
@@ -95,19 +111,21 @@ void meshChunk(const Context& ctx, IVec3 cc, uint16_t* pad, uint32_t* mask, bool
                     p[d.u] = i;
                     p[d.v] = j;
                     uint16_t c = pad[pidx(p[0], p[1], p[2])];
-                    uint32_t key = 0;
+                    uint64_t key = 0;
+                    uint32_t* cl = &corners[(j * N + i) * 4];
+                    cl[0] = cl[1] = cl[2] = cl[3] = 0;
                     if (c) {
                         int q[3] = {p[0] + nrm[0], p[1] + nrm[1], p[2] + nrm[2]};
                         uint16_t nb = pad[pidx(q[0], q[1], q[2])];
                         bool visible = nb == 0 || (kind[nb] == kTransparent && nb != c);
                         if (visible) {
+                            auto at = [&](int ou, int ov) {
+                                return pidx(q[0] + du[0] * ou + dv[0] * ov, q[1] + du[1] * ou + dv[1] * ov,
+                                            q[2] + du[2] * ou + dv[2] * ov);
+                            };
                             uint32_t aoBits = 0xFF;  // all corners fully lit
                             if (kind[c] == kOpaque) {
-                                auto occ = [&](int ou, int ov) {
-                                    int r[3] = {q[0] + du[0] * ou + dv[0] * ov, q[1] + du[1] * ou + dv[1] * ov,
-                                                q[2] + du[2] * ou + dv[2] * ov};
-                                    return kind[pad[pidx(r[0], r[1], r[2])]] == kOpaque ? 1 : 0;
-                                };
+                                auto occ = [&](int ou, int ov) { return kind[pad[at(ou, ov)]] == kOpaque ? 1 : 0; };
                                 aoBits = 0;
                                 for (int k = 0; k < 4; ++k) {
                                     int su = kCornerU[k] ? 1 : -1, sv = kCornerV[k] ? 1 : -1;
@@ -116,7 +134,30 @@ void meshChunk(const Context& ctx, IVec3 cc, uint16_t* pad, uint32_t* mask, bool
                                     aoBits |= uint32_t(ao) << (2 * k);
                                 }
                             }
-                            key = uint32_t(c) | aoBits << 16 | 1u << 24;
+                            // Smooth block light: average the cells around each corner that let light through.
+                            if (lit) {
+                                for (int k = 0; k < 4; ++k) {
+                                    int su = kCornerU[k] ? 1 : -1, sv = kCornerV[k] ? 1 : -1;
+                                    int cells[4] = {at(0, 0), at(su, 0), at(0, sv), at(su, sv)};
+                                    // A corner cell hidden behind two solid side cells cannot contribute.
+                                    bool sideU = ctx.blocksLight[pad[cells[1]]], sideV = ctx.blocksLight[pad[cells[2]]];
+                                    int r = 0, g = 0, b = 0, n = 0;
+                                    for (int e = 0; e < 4; ++e) {
+                                        if (e > 0 && ctx.blocksLight[pad[cells[e]]]) continue;
+                                        if (e == 3 && sideU && sideV) continue;
+                                        uint16_t lv = lightPad[cells[e]];
+                                        r += lightR(lv);
+                                        g += lightG(lv);
+                                        b += lightB(lv);
+                                        ++n;
+                                    }
+                                    auto avg = [&](int t) { return uint32_t((t * 17 + n / 2) / n); };
+                                    cl[k] = avg(r) | avg(g) << 8 | avg(b) << 16;
+                                }
+                            }
+                            bool uniformLight = cl[0] == cl[1] && cl[1] == cl[2] && cl[2] == cl[3];
+                            key = uint64_t(c) | uint64_t(aoBits) << 16 | kValid |
+                                  (uniformLight ? uint64_t(cl[0]) << 25 : kNonUniform);
                             any = true;
                         }
                     }
@@ -127,12 +168,14 @@ void meshChunk(const Context& ctx, IVec3 cc, uint16_t* pad, uint32_t* mask, bool
             int plane = s + (d.sign > 0 ? 1 : 0);
             for (int j = 0; j < N; ++j)
                 for (int i = 0; i < N;) {
-                    uint32_t key = mask[j * N + i];
+                    uint64_t key = mask[j * N + i];
                     if (!key) { ++i; continue; }
                     uint8_t ao[4];
-                    uint32_t aoBits = (key >> 16) & 0xFF;
+                    uint32_t aoBits = uint32_t(key >> 16) & 0xFF;
                     for (int k = 0; k < 4; ++k) ao[k] = uint8_t((aoBits >> (2 * k)) & 3);
-                    bool uniform = ao[0] == ao[1] && ao[1] == ao[2] && ao[2] == ao[3];
+                    bool uniform = ao[0] == ao[1] && ao[1] == ao[2] && ao[2] == ao[3] && !(key & kNonUniform);
+                    uint32_t light[4];
+                    std::copy_n(&corners[(j * N + i) * 4], 4, light);
                     int w = 1, h = 1;
                     if (greedy && uniform) {
                         while (i + w < N && mask[j * N + i + w] == key) ++w;
@@ -148,7 +191,7 @@ void meshChunk(const Context& ctx, IVec3 cc, uint16_t* pad, uint32_t* mask, bool
                     uint16_t c = uint16_t(key & 0xFFFF);
                     const Material& m = ctx.model.materials[c];
                     auto& dst = kind[c] == kTransparent ? out.transparent : out.opaque;
-                    emitQuad(dst, d, plane, i, j, w, h, ao, m, (m.flags & kMatEmissive) != 0, di);
+                    emitQuad(dst, d, plane, i, j, w, h, ao, light, m, (m.flags & kMatEmissive) != 0, di);
                     i += w;
                 }
         }
@@ -158,7 +201,7 @@ void meshChunk(const Context& ctx, IVec3 cc, uint16_t* pad, uint32_t* mask, bool
 }  // namespace
 
 std::vector<ChunkMesh> buildMeshes(const VoxelModel& model, const MeshOptions& opts) {
-    Context ctx{model, {}, {}};
+    Context ctx{model, {}, {}, {}, nullptr};
     size_t n = model.materials.size();
     ctx.remap.resize(n);
     ctx.kind.resize(n);
@@ -168,6 +211,10 @@ std::vector<ChunkMesh> buildMeshes(const VoxelModel& model, const MeshOptions& o
         ctx.remap[i] = hidden ? 0 : uint16_t(i);
         ctx.kind[i] = i == 0 ? kAir : (m.flags & kMatTransparent) ? kTransparent : kOpaque;
     }
+    // Light blocking follows the remapped (visible) palette: hidden decorations are air.
+    ctx.blocksLight.resize(n);
+    for (size_t i = 0; i < n; ++i) ctx.blocksLight[i] = i != 0 && blocksLight(model.materials[i]);
+    ctx.light = model.light.get();
 
     std::vector<IVec3> coords;
     for (const auto& kv : model.chunks())
@@ -176,12 +223,13 @@ std::vector<ChunkMesh> buildMeshes(const VoxelModel& model, const MeshOptions& o
     std::vector<ChunkMesh> meshes(coords.size());
     std::atomic<size_t> next{0};
     auto worker = [&] {
-        std::vector<uint16_t> pad(size_t(P) * P * P);
-        std::vector<uint32_t> mask(size_t(N) * N);
+        std::vector<uint16_t> pad(size_t(P) * P * P), lightPad(size_t(P) * P * P);
+        std::vector<uint64_t> mask(size_t(N) * N);
+        std::vector<uint32_t> corners(size_t(N) * N * 4);
         for (;;) {
             size_t k = next.fetch_add(1);
             if (k >= coords.size()) break;
-            meshChunk(ctx, coords[k], pad.data(), mask.data(), opts.greedy, meshes[k]);
+            meshChunk(ctx, coords[k], pad.data(), lightPad.data(), mask.data(), corners.data(), opts.greedy, meshes[k]);
         }
     };
     unsigned threads = std::max(1u, std::min(std::thread::hardware_concurrency(), unsigned(coords.size())));

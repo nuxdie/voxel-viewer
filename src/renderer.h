@@ -19,6 +19,7 @@ struct RenderSettings {
     float clipY = 1e9f;  // world Y above which fragments are discarded
     bool darkBackground = false;  // dark studio backdrop instead of the sky
     bool shadows = true;
+    bool night = false;           // moonlight: dim blue sun and sky, so block light stands out
     int paintStyle = 0;  // splat modes: 0 = painted brush dabs, 1 = watercolor on paper
 };
 
@@ -45,7 +46,7 @@ private:
     // Uniforms of the shared lighting code (kLightingGlsl) in one program.
     struct LightLocs {
         GLint lightDir = -1, lightVP = -1, shadowMap = -1, shadowTexel = -1, shadowsOn = -1, eye = -1, fogDist = -1,
-              horizon = -1, ao = -1;
+              horizon = -1, ao = -1, sunColor = -1, skyColor = -1, bounceColor = -1, skyTop = -1;
         void init(GLuint prog);
     };
     struct VoxelProgram {
@@ -61,7 +62,8 @@ private:
     };
     // Per-frame lighting environment shared by every mode.
     struct Environment {
-        Vec3 skyTop, skyBottom, horizonLinear;
+        Vec3 skyTop, skyBottom, horizonLinear, skyTopLinear;
+        Vec3 sunColor, skyColor, bounceColor;  // linear
     };
     struct GpuChunk {
         Vec3 origin;

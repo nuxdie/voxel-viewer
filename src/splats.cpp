@@ -1,5 +1,7 @@
 #include "splats.h"
 
+#include "light_field.h"
+
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -17,6 +19,8 @@ struct Context {
     const VoxelModel& model;
     std::vector<uint16_t> remap;
     std::vector<uint8_t> kind;
+    std::vector<uint8_t> blocksLight;
+    const LightField* light = nullptr;
 };
 
 inline int pidx(int x, int y, int z) { return ((y + 2) * P + (z + 2)) * P + (x + 2); }
@@ -49,8 +53,9 @@ uint32_t hash3(int x, int y, int z) {
     return h ^ (h >> 15);
 }
 
-void buildChunk(const Context& ctx, IVec3 cc, uint16_t* pad, SplatChunk& out) {
+void buildChunk(const Context& ctx, IVec3 cc, uint16_t* pad, uint16_t* lightPad, SplatChunk& out) {
     fillPadded(ctx, cc, pad);
+    if (ctx.light) ctx.light->fillPadded(cc, 2, lightPad);
     out.chunk = cc;
     static const int kFace[6][3] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
     for (int y = 0; y < N; ++y)
@@ -113,6 +118,19 @@ void buildChunk(const Context& ctx, IVec3 cc, uint16_t* pad, SplatChunk& out) {
                 float frac = float(occupied) / 125.0f;
                 s.light = uint8_t(std::lround(std::clamp(1.0f - (frac - 0.45f) * 1.7f, 0.3f, 1.0f) * 255.0f));
                 s.pad[0] = s.pad[1] = s.pad[2] = 0;
+                s.surface = packSurface(m);
+                // Block light: the brightest open face neighbor.
+                s.lr = s.lg = s.lb = 0;
+                if (ctx.light) {
+                    for (const auto& f : kFace) {
+                        int ni = pidx(x + f[0], y + f[1], z + f[2]);
+                        if (ctx.blocksLight[pad[ni]]) continue;
+                        uint16_t lv = lightPad[ni];
+                        s.lr = std::max<uint8_t>(s.lr, uint8_t(lightR(lv) * 17));
+                        s.lg = std::max<uint8_t>(s.lg, uint8_t(lightG(lv) * 17));
+                        s.lb = std::max<uint8_t>(s.lb, uint8_t(lightB(lv) * 17));
+                    }
+                }
                 out.splats.push_back(s);
             }
 }
@@ -120,7 +138,7 @@ void buildChunk(const Context& ctx, IVec3 cc, uint16_t* pad, SplatChunk& out) {
 }  // namespace
 
 std::vector<SplatChunk> buildSplats(const VoxelModel& model, const MeshOptions& opts) {
-    Context ctx{model, {}, {}};
+    Context ctx{model, {}, {}, {}, nullptr};
     size_t n = model.materials.size();
     ctx.remap.resize(n);
     ctx.kind.resize(n);
@@ -130,6 +148,9 @@ std::vector<SplatChunk> buildSplats(const VoxelModel& model, const MeshOptions& 
         ctx.remap[i] = hidden ? 0 : uint16_t(i);
         ctx.kind[i] = hidden ? kAir : (m.flags & kMatTransparent) ? kTransparent : kOpaque;
     }
+    ctx.blocksLight.resize(n);
+    for (size_t i = 0; i < n; ++i) ctx.blocksLight[i] = i != 0 && blocksLight(model.materials[i]);
+    ctx.light = model.light.get();
     std::vector<IVec3> coords;
     for (const auto& kv : model.chunks())
         if (kv.second->count) coords.push_back(chunkCoordFromKey(kv.first));
@@ -137,11 +158,11 @@ std::vector<SplatChunk> buildSplats(const VoxelModel& model, const MeshOptions& 
     std::vector<SplatChunk> chunks(coords.size());
     std::atomic<size_t> next{0};
     auto worker = [&] {
-        std::vector<uint16_t> pad(size_t(P) * P * P);
+        std::vector<uint16_t> pad(size_t(P) * P * P), lightPad(size_t(P) * P * P);
         for (;;) {
             size_t k = next.fetch_add(1);
             if (k >= coords.size()) break;
-            buildChunk(ctx, coords[k], pad.data(), chunks[k]);
+            buildChunk(ctx, coords[k], pad.data(), lightPad.data(), chunks[k]);
         }
     };
     unsigned threads = std::max(1u, std::min(std::thread::hardware_concurrency(), unsigned(coords.size())));

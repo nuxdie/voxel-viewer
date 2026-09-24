@@ -44,6 +44,7 @@ const char* kHelp = R"(voxel-viewer controls
   P         cycle painting modes: off -> painted -> watercolor on paper -> off
   V         toggle small decorations (torches, flowers, rails...)
   J         toggle sun shadows
+  N         toggle night (moonlight, so light-emitting blocks stand out)
   L         toggle sky / dark studio background
   ] / [     next / previous file in the folder
   Ctrl+O    open file dialog (zenity/kdialog)   or drag & drop files onto the window
@@ -175,6 +176,7 @@ bool App::parseArgs(int argc, char** argv) {
                         "  --no-ao                disable ambient occlusion\n"
                         "  --no-shadows           disable sun shadows\n"
                         "  --dark                 dark studio background instead of the sky\n"
+                        "  --night                start at night (moonlight; light-emitting blocks stand out)\n"
                         "  --msaa N               multisample count (default 8, 0 to disable)\n"
                         "  --no-prime             do not request the NVIDIA GPU on hybrid-graphics laptops\n\n%s",
                         kHelp);
@@ -203,6 +205,8 @@ bool App::parseArgs(int argc, char** argv) {
             meshOpts_.smoothIterations = std::clamp(std::atoi(next().c_str()), 0, kMaxSmoothIterations);
         } else if (a == "--no-shadows") {
             settings_.shadows = false;
+        } else if (a == "--night") {
+            settings_.night = true;
         } else if (a == "--dark") {
             settings_.darkBackground = true;
         } else if (a == "--no-ao") {
@@ -328,6 +332,7 @@ void App::updateTitle() {
         if (meshOpts_.watercolor) t += settings_.paintStyle == 0 ? " — painted" : " — watercolor";
         else if (meshOpts_.smooth) t += " — smooth (" + std::to_string(meshOpts_.smoothIterations) + ")";
         if (meshOpts_.hideDecorations) t += " — decorations hidden";
+        if (settings_.night) t += " — night";
         if (camera_.mode() == Camera::Mode::Fly) t += " — FLY";
         char buf[64];
         std::snprintf(buf, sizeof(buf), " — %.0f fps", double(fps_));
@@ -386,6 +391,10 @@ void App::onKey(int key, int mods) {
             break;
         case GLFW_KEY_L: settings_.darkBackground = !settings_.darkBackground; break;
         case GLFW_KEY_J: settings_.shadows = !settings_.shadows; break;
+        case GLFW_KEY_N:
+            settings_.night = !settings_.night;
+            updateTitle();
+            break;
         case GLFW_KEY_P:
             if (!meshOpts_.watercolor) {
                 meshOpts_.watercolor = true;

@@ -17,6 +17,7 @@ add_library(voxelviewer SHARED
   ${VV_SRC}/mesher.cpp
   ${VV_SRC}/smooth_mesher.cpp
   ${VV_SRC}/splats.cpp
+  ${VV_SRC}/light_field.cpp
   ${VV_SRC}/renderer.cpp
   ${VV_SRC}/camera.cpp
 )

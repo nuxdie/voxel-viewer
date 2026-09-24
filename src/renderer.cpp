@@ -14,7 +14,11 @@ namespace {
 // a warm sun with shadow-mapped soft shadows, cool sky light and ground bounce (both scaled by
 // ambient occlusion), aerial perspective toward the horizon, and one tone curve.
 const char* kLightingGlsl = R"(
-uniform vec3 uLightDir;      // toward the sun, world space
+uniform vec3 uLightDir;      // toward the sun (or moon), world space
+uniform vec3 uSunColor;      // linear
+uniform vec3 uSkyColor;      // ambient sky light, linear
+uniform vec3 uBounceColor;   // light bounced off the ground, linear
+uniform vec3 uSkyTop;        // sky gradient for reflections, linear
 uniform mat4 uLightVP;
 uniform sampler2D uShadowMap;
 uniform vec2 uShadowTexel;
@@ -35,16 +39,44 @@ float shadowAt(vec3 p) {
         }
     return lit / 9.0;
 }
-// base: linear albedo, n: unit normal, p: point just off the surface, ao: 1 = open, lower = enclosed.
-vec3 lightLinear(vec3 base, vec3 n, vec3 p, float ao, bool emissive) {
+// Block light level (0-15 per channel) to linear intensity; like Minecraft, each level is ~20% dimmer.
+vec3 blockLightColor(vec3 level) {
+    return 1.6 * pow(vec3(0.8), 15.0 - level) * step(vec3(0.05), level);
+}
+// What a mirror sees in direction d: the sky above the horizon, the ground below it.
+vec3 skyRadiance(vec3 d) {
+    if (d.y >= 0.0) return mix(uHorizon, uSkyTop, pow(clamp(d.y, 0.0, 1.0), 0.6));
+    return mix(uHorizon, uBounceColor * 2.5, clamp(-d.y * 4.0, 0.0, 1.0));
+}
+// base: linear albedo, n: unit normal, p: point just off the surface, ao: 1 = open, lower = enclosed,
+// block: block light (linear), rough: 0 = mirror .. 1 = matte, metal: 0 or 1.
+// Returns linear radiance; fresnel receives how reflective the surface is from this angle.
+vec3 shade(vec3 base, vec3 n, vec3 p, float ao, bool emissive, vec3 block, float rough, float metal,
+           out float fresnel) {
+    fresnel = 0.0;
     if (emissive) return base * 1.3;
     ao = mix(1.0, ao, uAoStrength);
     float ndl = max(dot(n, uLightDir), 0.0);
     float sh = ndl > 0.0 ? shadowAt(p) : 0.0;
-    vec3 sun = vec3(1.0, 0.9, 0.76) * 1.05 * ndl * sh * mix(1.0, ao, 0.35);
-    vec3 sky = vec3(0.40, 0.50, 0.75) * (0.55 + 0.45 * n.y) * ao;
-    vec3 bounce = vec3(0.12, 0.09, 0.06) * (0.5 - 0.5 * n.y) * ao;
-    return base * (sun + sky + bounce);
+    vec3 ambient = (uSkyColor * (0.55 + 0.45 * n.y) + uBounceColor * (0.5 - 0.5 * n.y)) * ao;
+    vec3 light = uSunColor * ndl * sh * mix(1.0, ao, 0.35) + ambient + block * mix(1.0, ao, 0.5);
+    vec3 diffuse = base * (1.0 - metal) * light;
+
+    // Reflections: the sky (blurred toward ambient with roughness) plus a sun highlight, weighted by
+    // Schlick Fresnel. Only glossy surfaces get the strong grazing-angle boost.
+    vec3 v = normalize(uEye - p);
+    float ndv = max(dot(n, v), 0.0);
+    float gloss = (1.0 - rough) * (1.0 - rough);
+    vec3 f0 = mix(vec3(0.04), base, metal);
+    vec3 F = f0 + (1.0 - f0) * pow(1.0 - ndv, 5.0) * gloss;
+    fresnel = max(F.r, max(F.g, F.b));
+    vec3 env = mix(skyRadiance(reflect(-v, n)), uSkyColor * 0.8 + block * 0.3, rough) * ao;
+    vec3 h = normalize(uLightDir + v);
+    float r4 = max(rough * rough * rough * rough, 1e-4);
+    float shininess = min(2.0 / r4 - 2.0, 4096.0);
+    float spec = pow(max(dot(n, h), 0.0), shininess) * (shininess + 8.0) / 25.13;
+    vec3 specular = env * F + uSunColor * sh * ndl * spec * F;
+    return diffuse * (1.0 - fresnel) + specular;
 }
 // Aerial perspective, soft shoulder tone curve, display gamma.
 vec3 finishColor(vec3 col, vec3 p) {
@@ -65,12 +97,15 @@ std::string withLighting(const char* src) {
 const char* kVoxelVs = R"(#version 330 core
 layout(location = 0) in uvec4 aPos;   // x, y, z (chunk local), normal | ao << 3 | emissive << 5
 layout(location = 1) in vec4 aColor;
+layout(location = 2) in uvec4 aLightSurface;  // block light rgb (level * 17), surface finish
 uniform mat4 uViewProj;
 uniform vec3 uOrigin;
 out vec4 vColor;
 out vec3 vWorld;
 out vec3 vNormal;
 out float vAo;
+out vec3 vBlock;
+flat out vec2 vSurface;   // roughness, metal
 flat out int vEmissive;
 const vec3 kNormals[6] = vec3[6](vec3(1, 0, 0), vec3(-1, 0, 0), vec3(0, 1, 0),
                                  vec3(0, -1, 0), vec3(0, 0, 1), vec3(0, 0, -1));
@@ -81,6 +116,8 @@ void main() {
     vNormal = kNormals[int(aPos.w & 7u)];
     vAo = pow(float((aPos.w >> 3) & 3u) / 3.0, 1.3) * 0.75 + 0.25;
     vEmissive = int((aPos.w >> 5) & 1u);
+    vBlock = blockLightColor(vec3(aLightSurface.rgb) / 17.0);
+    vSurface = vec2(float(aLightSurface.a & 15u) / 15.0, float((aLightSurface.a >> 4) & 1u));
     gl_Position = uViewProj * vec4(p, 1.0);
 }
 )";
@@ -90,14 +127,19 @@ layout(location = 0) in vec3 aPos;      // chunk-local fixed point: p / 1024 - 2
 layout(location = 1) in vec3 aNormal;   // normalized snorm8
 layout(location = 2) in uint aAoEmissive;
 layout(location = 3) in vec4 aColor;
+layout(location = 4) in uvec4 aLightSurface;  // block light rgb (level * 17), surface finish
 uniform mat4 uViewProj;
 uniform vec3 uOrigin;
 out vec4 vColor;
 out vec3 vWorld;
 out vec3 vNormal;
 out float vAo;
+out vec3 vBlock;
+flat out vec2 vSurface;   // roughness, metal
 flat out int vEmissive;
 void main() {
+    vBlock = blockLightColor(vec3(aLightSurface.rgb) / 17.0);
+    vSurface = vec2(float(aLightSurface.a & 15u) / 15.0, float((aLightSurface.a >> 4) & 1u));
     vec3 p = aPos / 1024.0 - 2.0 + uOrigin;
     vWorld = p;
     vColor = aColor;
@@ -113,6 +155,8 @@ in vec4 vColor;
 in vec3 vWorld;
 in vec3 vNormal;
 in float vAo;
+in vec3 vBlock;
+flat in vec2 vSurface;
 flat in int vEmissive;
 uniform float uClipY;
 out vec4 fragColor;
@@ -121,8 +165,10 @@ void main() {
     vec3 n = normalize(vNormal);
     if (!gl_FrontFacing) n = -n;
     vec3 base = pow(vColor.rgb, vec3(2.2));
-    vec3 col = lightLinear(base, n, vWorld + n * 0.6, vAo, vEmissive != 0);
-    fragColor = vec4(finishColor(col, vWorld), vColor.a);
+    float fresnel;
+    vec3 col = shade(base, n, vWorld + n * 0.6, vAo, vEmissive != 0, vBlock, vSurface.x, vSurface.y, fresnel);
+    // Glass and water get more opaque where they reflect more (grazing angles).
+    fragColor = vec4(finishColor(col, vWorld), mix(vColor.a, 1.0, fresnel));
 }
 )";
 
@@ -170,6 +216,7 @@ layout(location = 1) in vec3 aNormal;
 layout(location = 2) in uint aFlags;      // bit 0 emissive, bit 1 transparent
 layout(location = 3) in vec4 aColor;
 layout(location = 4) in float aLight;     // ambient occlusion
+layout(location = 5) in uvec4 aLightSurface;
 uniform mat4 uView;
 uniform mat4 uProj;
 uniform vec3 uOrigin;
@@ -197,7 +244,10 @@ void main() {
     // Same lighting as every other mode; the paper pass adds the watercolor look.
     vec3 n = dot(aNormal, aNormal) > 1e-4 ? normalize(aNormal) : vec3(0.0, 1.0, 0.0);
     vec3 base = pow(aColor.rgb, vec3(2.2));
-    vec3 col = lightLinear(base, n, c + n * 0.3, aLight, (aFlags & 1u) != 0u);
+    float fresnel;
+    vec3 col = shade(base, n, c + n * 0.3, aLight, (aFlags & 1u) != 0u,
+                     blockLightColor(vec3(aLightSurface.rgb) / 17.0), float(aLightSurface.a & 15u) / 15.0,
+                     float((aLightSurface.a >> 4) & 1u), fresnel);
     vColor = finishColor(col, c);
     if ((aFlags & 2u) != 0u) vColor = mix(vec3(1.0), vColor, 0.35 + 0.5 * aColor.a);  // thin, watery washes
 }
@@ -290,6 +340,7 @@ layout(location = 1) in vec3 aNormal;
 layout(location = 2) in uint aFlags;      // bit 0 emissive, bit 1 transparent
 layout(location = 3) in vec4 aColor;
 layout(location = 4) in float aLight;     // ambient occlusion
+layout(location = 5) in uvec4 aLightSurface;
 uniform mat4 uView;
 uniform mat4 uProj;
 uniform vec3 uOrigin;
@@ -326,8 +377,10 @@ void main() {
     base *= mix(vec3(1.05, 1.0, 0.93), vec3(0.94, 1.0, 1.07), h1);
 
     vec3 n = dot(aNormal, aNormal) > 1e-4 ? normalize(aNormal) : vec3(0.0, 1.0, 0.0);
-    vec3 col = lightLinear(base, n, c + n * 0.3, aLight, (aFlags & 1u) != 0u);
-    if ((aFlags & 2u) != 0u) col = mix(col, uHorizon, 0.25);
+    float fresnel;
+    vec3 col = shade(base, n, c + n * 0.3, aLight, (aFlags & 1u) != 0u,
+                     blockLightColor(vec3(aLightSurface.rgb) / 17.0), float(aLightSurface.a & 15u) / 15.0,
+                     float((aLightSurface.a >> 4) & 1u), fresnel);
     vColor = finishColor(col, c);
 }
 )";
@@ -498,6 +551,10 @@ void Renderer::LightLocs::init(GLuint prog) {
     fogDist = glGetUniformLocation(prog, "uFogDist");
     horizon = glGetUniformLocation(prog, "uHorizon");
     ao = glGetUniformLocation(prog, "uAoStrength");
+    sunColor = glGetUniformLocation(prog, "uSunColor");
+    skyColor = glGetUniformLocation(prog, "uSkyColor");
+    bounceColor = glGetUniformLocation(prog, "uBounceColor");
+    skyTop = glGetUniformLocation(prog, "uSkyTop");
 }
 
 bool Renderer::VoxelProgram::init(const char* vs, const char* fs) {
@@ -511,7 +568,7 @@ bool Renderer::VoxelProgram::init(const char* vs, const char* fs) {
 }
 
 bool Renderer::ShadowMeshProgram::init(const char* vs, const char* fs) {
-    id = link(vs, fs);
+    id = link(withLighting(vs).c_str(), fs);  // the mesh vertex shaders use the shared helpers
     if (!id) return false;
     viewProj = glGetUniformLocation(id, "uViewProj");
     origin = glGetUniformLocation(id, "uOrigin");
@@ -614,6 +671,8 @@ Renderer::GpuMesh Renderer::makeMesh(const std::vector<PackedVertex>& verts) {
     glVertexAttribIPointer(0, 4, GL_UNSIGNED_BYTE, sizeof(PackedVertex), nullptr);
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(PackedVertex), reinterpret_cast<void*>(4));
+    glEnableVertexAttribArray(2);
+    glVertexAttribIPointer(2, 4, GL_UNSIGNED_BYTE, sizeof(PackedVertex), reinterpret_cast<void*>(offsetof(PackedVertex, lr)));
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo_);
     glBindVertexArray(0);
     m.indexCount = GLsizei(verts.size() / 4 * 6);
@@ -693,6 +752,8 @@ Renderer::GpuMesh Renderer::makeMesh(const SmoothMesh& mesh) {
     glVertexAttribIPointer(2, 1, GL_UNSIGNED_BYTE, stride, reinterpret_cast<void*>(offsetof(SmoothVertex, aoEmissive)));
     glEnableVertexAttribArray(3);
     glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, stride, reinterpret_cast<void*>(offsetof(SmoothVertex, r)));
+    glEnableVertexAttribArray(4);
+    glVertexAttribIPointer(4, 4, GL_UNSIGNED_BYTE, stride, reinterpret_cast<void*>(offsetof(SmoothVertex, lr)));
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m.ebo);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, GLsizeiptr(mesh.indices.size() * sizeof(uint32_t)), mesh.indices.data(), GL_STATIC_DRAW);
     glBindVertexArray(0);
@@ -762,7 +823,9 @@ Renderer::GpuMesh Renderer::makeMesh(const std::vector<Splat>& splats) {
     glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, stride, reinterpret_cast<void*>(offsetof(Splat, r)));
     glEnableVertexAttribArray(4);
     glVertexAttribPointer(4, 1, GL_UNSIGNED_BYTE, GL_TRUE, stride, reinterpret_cast<void*>(offsetof(Splat, light)));
-    for (GLuint a = 0; a < 5; ++a) glVertexAttribDivisor(a, 1);  // one splat per instance
+    glEnableVertexAttribArray(5);
+    glVertexAttribIPointer(5, 4, GL_UNSIGNED_BYTE, stride, reinterpret_cast<void*>(offsetof(Splat, lr)));
+    for (GLuint a = 0; a < 6; ++a) glVertexAttribDivisor(a, 1);  // one splat per instance
     glBindVertexArray(0);
     m.indexCount = GLsizei(splats.size());
     gpuBytes_ += splats.size() * sizeof(Splat);
@@ -875,16 +938,26 @@ void Renderer::renderShadowMap(float clipY) {
 
 Renderer::Environment Renderer::environment(const RenderSettings& s) const {
     Environment e;
-    if (s.darkBackground) {
-        e.skyTop = Vec3(0.20f, 0.22f, 0.27f);
-        e.skyBottom = Vec3(0.07f, 0.08f, 0.10f);
+    auto lin = [](Vec3 c) { return Vec3(std::pow(c.x, 2.2f), std::pow(c.y, 2.2f), std::pow(c.z, 2.2f)); };
+    if (s.night) {
+        // Moonlight: dim and blue, so block light carries the scene.
+        e.skyTop = Vec3(0.02f, 0.03f, 0.08f);
+        e.skyBottom = Vec3(0.07f, 0.09f, 0.17f);
+        e.sunColor = Vec3(0.13f, 0.16f, 0.28f);
+        e.skyColor = Vec3(0.035f, 0.045f, 0.09f);
+        e.bounceColor = Vec3(0.01f, 0.012f, 0.02f);
     } else {
-        e.skyTop = Vec3(0.40f, 0.63f, 0.92f);
-        e.skyBottom = Vec3(0.84f, 0.90f, 0.96f);
+        e.skyTop = s.darkBackground ? Vec3(0.20f, 0.22f, 0.27f) : Vec3(0.40f, 0.63f, 0.92f);
+        e.skyBottom = s.darkBackground ? Vec3(0.07f, 0.08f, 0.10f) : Vec3(0.84f, 0.90f, 0.96f);
+        e.sunColor = Vec3(1.05f, 0.945f, 0.8f);
+        e.skyColor = Vec3(0.40f, 0.50f, 0.75f);
+        e.bounceColor = Vec3(0.12f, 0.09f, 0.06f);
     }
     // Distance haze fades toward the color near the horizon.
-    Vec3 h = s.darkBackground ? (e.skyTop + e.skyBottom) * 0.5f : e.skyBottom;
-    e.horizonLinear = Vec3(std::pow(h.x, 2.2f), std::pow(h.y, 2.2f), std::pow(h.z, 2.2f));
+    Vec3 h = s.darkBackground && !s.night ? (e.skyTop + e.skyBottom) * 0.5f : e.skyBottom;
+    e.horizonLinear = lin(h);
+    // Reflections always see a real sky, even in front of the dark studio backdrop.
+    e.skyTopLinear = s.night ? lin(e.skyTop) : lin(Vec3(0.40f, 0.63f, 0.92f));
     return e;
 }
 
@@ -903,6 +976,10 @@ void Renderer::applyLighting(const LightLocs& l, const Camera& cam, const Render
     glUniform1f(l.fogDist, cam.sceneRadius() * 9.0f + 60.0f);
     glUniform3f(l.horizon, env.horizonLinear.x, env.horizonLinear.y, env.horizonLinear.z);
     glUniform1f(l.ao, s.aoStrength);
+    glUniform3f(l.sunColor, env.sunColor.x, env.sunColor.y, env.sunColor.z);
+    glUniform3f(l.skyColor, env.skyColor.x, env.skyColor.y, env.skyColor.z);
+    glUniform3f(l.bounceColor, env.bounceColor.x, env.bounceColor.y, env.bounceColor.z);
+    glUniform3f(l.skyTop, env.skyTopLinear.x, env.skyTopLinear.y, env.skyTopLinear.z);
 }
 
 void Renderer::drawSky(const Environment& env) {
@@ -1075,7 +1152,7 @@ void Renderer::render(const Camera& cam, int width, int height, const RenderSett
         glEnable(GL_BLEND);
         glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
         if (s.grid) {
-            float gc[4] = {1.0f, 1.0f, 1.0f, s.darkBackground ? 0.12f : 0.3f};
+            float gc[4] = {1.0f, 1.0f, 1.0f, s.night ? 0.06f : s.darkBackground ? 0.12f : 0.3f};
             glUniform4fv(uLineColor_, 1, gc);
             glDrawArrays(GL_LINES, 0, gridVerts_);
         }

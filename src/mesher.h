@@ -8,12 +8,19 @@
 
 namespace vox {
 
-// 8 bytes per vertex. Positions are local to the chunk (0..32).
+// 12 bytes per vertex. Positions are local to the chunk (0..32).
 struct PackedVertex {
     uint8_t x, y, z;
     uint8_t normalAo;  // bits 0-2: face direction (0..5), bits 3-4: ambient occlusion (0..3), bit 5: emissive
     uint8_t r, g, b, a;
+    uint8_t lr, lg, lb;  // block light at this corner, 0-255 (light level * 17)
+    uint8_t surface;     // bits 0-3: roughness (0 = mirror), bit 4: metal
 };
+
+// Packs a material's surface finish into the 8-bit form the vertex formats use.
+inline uint8_t packSurface(const Material& m) {
+    return uint8_t((m.roughness >> 4) | (m.metallic > 127 ? 16 : 0));
+}
 
 // Each quad is 4 vertices; draw with the shared quad index pattern (0,1,2, 0,2,3).
 struct ChunkMesh {

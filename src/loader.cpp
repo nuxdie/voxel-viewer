@@ -1,5 +1,7 @@
 #include "loader.h"
 
+#include "light_field.h"
+
 #include <algorithm>
 #include <fstream>
 #include <iterator>
@@ -26,9 +28,15 @@ std::unique_ptr<VoxelModel> loadModelFile(const std::string& path) {
 }
 
 std::unique_ptr<VoxelModel> loadModelData(const std::vector<uint8_t>& data) {
-    if (data.size() >= 4 && std::equal(data.begin(), data.begin() + 4, "VOX ")) return loadVox(data);
-    nbt::Tag root = nbt::parse(data);
-    return loadMinecraftNbt(root);
+    std::unique_ptr<VoxelModel> model;
+    if (data.size() >= 4 && std::equal(data.begin(), data.begin() + 4, "VOX ")) {
+        model = loadVox(data);
+    } else {
+        nbt::Tag root = nbt::parse(data);
+        model = loadMinecraftNbt(root);
+    }
+    model->light = LightField::build(*model);
+    return model;
 }
 
 }  // namespace vox

@@ -292,6 +292,76 @@ def write_forest(path):
         PaletteMax=I(len(pal)), Palette=T(COMPOUND, {k: I(v) for k, v in pal.items()}), BlockData=T(BYTE_ARRAY, bytes(data))))
 
 
+def write_courtyard(path):
+    """A courtyard with light sources, water, glass and metal blocks: for block light and reflections."""
+    W, H, L = 44, 16, 44
+    g = {}
+    for x in range(W):
+        for z in range(L):
+            g[(x, 0, z)] = "minecraft:stone"
+            edge = x < 3 or z < 3 or x >= W - 3 or z >= L - 3
+            g[(x, 1, z)] = "minecraft:grass_block" if edge else (
+                "minecraft:polished_andesite" if (x + z) % 2 else "minecraft:stone_bricks")
+    # Pond with a quartz rim.
+    for x in range(14, 30):
+        for z in range(16, 28):
+            rim = x in (14, 29) or z in (16, 27)
+            g[(x, 1, z)] = "minecraft:quartz_block" if rim else "minecraft:water"
+            if not rim:
+                g[(x, 0, z)] = "minecraft:sand"
+    # Metal and gem pillars.
+    for i, block in enumerate(["iron_block", "gold_block", "diamond_block", "copper_block", "emerald_block"]):
+        x = 8 + i * 7
+        for y in range(2, 6):
+            g[(x, y, 8)] = "minecraft:" + block
+    # A glass wall.
+    for x in range(33, 41):
+        for y in range(2, 7):
+            g[(x, y, 20)] = "minecraft:light_blue_stained_glass" if (x + y) % 3 else "minecraft:glass"
+    # Lamp posts: fence + torch / lantern / soul torch.
+    for (x, z, top) in [(6, 16, "torch"), (6, 28, "lantern"), (37, 30, "soul_lantern"), (37, 12, "torch"),
+                        (22, 34, "lantern")]:
+        for y in range(2, 5):
+            g[(x, y, z)] = "minecraft:oak_fence"
+        g[(x, 5, z)] = "minecraft:" + top
+    # Lights set into the floor and the pond rim.
+    for (x, z) in [(10, 22), (33, 22), (22, 12), (22, 31)]:
+        g[(x, 1, z)] = "minecraft:glowstone"
+    g[(14, 1, 21)] = "minecraft:sea_lantern"
+    g[(29, 1, 21)] = "minecraft:sea_lantern"
+    for i, f in enumerate(["ochre_froglight", "verdant_froglight", "pearlescent_froglight"]):
+        g[(18 + i * 4, 2, 36)] = "minecraft:" + f
+    # A small house lit from inside, with a doorway and windows.
+    for x in range(4, 13):
+        for z in range(33, 41):
+            for y in range(2, 7):
+                wall = x in (4, 12) or z in (33, 40)
+                if y == 6:
+                    g[(x, y, z)] = "minecraft:dark_oak_planks"
+                elif wall:
+                    door = z == 33 and x == 8 and y in (2, 3)
+                    window = y == 4 and (x in (6, 10) or z in (36, 37))
+                    if not door:
+                        g[(x, y, z)] = "minecraft:glass" if window else "minecraft:spruce_planks"
+    g[(8, 5, 37)] = "minecraft:glowstone"
+    write_sponge(path, W, H, L, g)
+
+
+def write_sponge(path, W, H, L, grid):
+    palette = {"minecraft:air": 0}
+    data = bytearray()
+    for y in range(H):
+        for z in range(L):
+            for x in range(W):
+                st = grid.get((x, y, z), "minecraft:air")
+                if st not in palette:
+                    palette[st] = len(palette)
+                data += varint(palette[st])
+    write_nbt(path, "Schematic", dict(Version=I(2), DataVersion=I(3465), Width=Sh(W), Height=Sh(H), Length=Sh(L),
+                                      PaletteMax=I(len(palette)), Palette=T(COMPOUND, {k: I(v) for k, v in palette.items()}),
+                                      BlockData=T(BYTE_ARRAY, bytes(data))))
+
+
 def main():
     out = sys.argv[1] if len(sys.argv) > 1 else "samples"
     os.makedirs(out, exist_ok=True)
@@ -303,6 +373,7 @@ def main():
     write_nbt(os.path.join(out, "house.nbt"), *structure(blocks))
     write_vox(os.path.join(out, "scene.vox"))
     write_forest(os.path.join(out, "forest.schem"))
+    write_courtyard(os.path.join(out, "courtyard.schem"))
     print("wrote samples to", out)
 
 

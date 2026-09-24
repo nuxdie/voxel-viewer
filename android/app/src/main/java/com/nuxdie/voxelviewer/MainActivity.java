@@ -27,7 +27,7 @@ import java.io.InputStream;
 
 public final class MainActivity extends Activity {
     private static final int REQUEST_OPEN = 1;
-    private static final String[] SAMPLES = {"forest.schem", "house.schem"};
+    private static final String[] SAMPLES = {"forest.schem", "courtyard.schem", "house.schem"};
 
     private ViewerSurface surface;
     private TextView status;
@@ -65,6 +65,7 @@ public final class MainActivity extends Activity {
         bar.addView(button("Slice +", v -> surface.queueEvent(() -> NativeLib.nativeSlice(1))));
         bar.addView(button("All", v -> surface.queueEvent(NativeLib::nativeClearSlice)));
         bar.addView(button("Decor", v -> surface.queueEvent(NativeLib::nativeToggleDecorations)));
+        bar.addView(button("Night", v -> surface.queueEvent(NativeLib::nativeToggleNight)));
         bar.addView(button("Reset", v -> surface.queueEvent(NativeLib::nativeFrame)));
 
         HorizontalScrollView scroller = new HorizontalScrollView(this);

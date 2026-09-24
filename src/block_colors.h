@@ -11,6 +11,9 @@ struct BlockInfo {
     Color color;
     uint8_t flags = 0;       // MaterialFlags
     bool invisible = false;  // air, barrier, structure_void, light...
+    uint8_t emission = 0;    // Minecraft light level 0-15
+    uint8_t roughness = 230;
+    uint8_t metallic = 0;
 };
 
 // Accepts "minecraft:oak_log[axis=y]", "oak_log", etc.

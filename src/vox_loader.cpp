@@ -249,7 +249,25 @@ std::unique_ptr<VoxelModel> loadVox(const std::vector<uint8_t>& data) {
                 m.color.a = uint8_t(a * 255.0f);
                 m.flags |= kMatTransparent;
             } else if (type == "_emit") {
-                m.flags |= kMatEmissive;
+                // _emit is the strength (0-1) and _flux an extra power step; map both to a light level.
+                float emit = get("_emit").empty() ? 1.0f : float(std::atof(get("_emit").c_str()));
+                float flux = float(std::atof(get("_flux").c_str()));
+                if (emit > 0.0f) {
+                    m.flags |= kMatEmissive;
+                    long level = std::lround(7.0f + 8.0f * std::min(emit, 1.0f) + flux);
+                    m.emission = uint8_t(std::clamp(level, 1L, 15L));
+                }
+            }
+            // Surface finish: metal and glass keep MagicaVoxel's own roughness.
+            auto num = [&](const char* k, float def) {
+                std::string v = get(k);
+                return v.empty() ? def : float(std::atof(v.c_str()));
+            };
+            if (type == "_metal") {
+                m.metallic = uint8_t(std::clamp(num("_metal", 1.0f), 0.0f, 1.0f) * 255.0f);
+                m.roughness = uint8_t(std::clamp(num("_rough", 0.2f), 0.0f, 1.0f) * 255.0f);
+            } else if (type == "_glass" || type == "_blend") {
+                m.roughness = uint8_t(std::clamp(num("_rough", 0.05f), 0.0f, 1.0f) * 255.0f);
             }
         }
         model->materials.push_back(m);

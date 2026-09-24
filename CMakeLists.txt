@@ -42,6 +42,7 @@ add_library(voxcore STATIC
   src/mesher.cpp
   src/smooth_mesher.cpp
   src/splats.cpp
+  src/light_field.cpp
   src/image_writer.cpp
 )
 target_include_directories(voxcore PUBLIC src)
