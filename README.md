@@ -5,6 +5,7 @@ A fast OpenGL voxel viewer for Linux, written in C++17. It opens **MagicaVoxel**
 
 ![screenshot](docs/screenshot.png)
 ![smooth mesher](docs/screenshot-smooth.png)
+![painted mode](docs/screenshot-painted.png)
 ![watercolor mode](docs/screenshot-watercolor.png)
 
 | Format | Extension | Notes |
@@ -30,7 +31,16 @@ The viewer detects the format from the file's content, so the extension doesn't 
   margin away from the cell walls. `K` cycles the number of relaxation passes
   (0 = chamfered, 16 = smoothest). The mesh is watertight across chunk borders; a test checks
   this.
-- **Watercolor mode** (press `P`, or start with `--watercolor`) doesn't draw cubes at all.
+- **Painted mode** (press `P`, or start with `--painted`) draws every visible surface voxel as
+  a short brush dab instead of a cube. Each dab has its own size, direction, value and color
+  temperature, bristle streaks, and a slightly jittered position, so silhouettes break up
+  like loose brushwork. Dabs are lit by a warm sun, with soft shadows from a shadow map,
+  cool sky light, ambient occlusion and a little ground bounce. They are drawn over a sky
+  gradient, with haze toward the horizon. A Kuwahara filter then merges the dabs into
+  painterly patches of color while keeping edges crisp, and a final pass adds saturation,
+  gentle contrast and a vignette. `tests/make_samples.py` writes a small `forest.schem`
+  that shows it off.
+- **Watercolor mode** (press `P` again, or start with `--watercolor`) doesn't draw cubes at all.
   Every visible surface voxel becomes a soft, irregular blob of pigment facing the camera,
   with its own size, rotation and amount of paint. It is shaded with warm light and cool
   blue-violet shadows, and highlights are left almost as bare paper. A full-screen pass then
@@ -99,10 +109,13 @@ voxel-viewer [options] [file...]
 
   --screenshot FILE.png  render the first file to a PNG and exit
   --size WxH             window / screenshot size (default 1600x1000)
+  --angle YAW,PITCH      initial view angle in degrees (default 45,30)
+  --zoom N               initial zoom in mouse-wheel steps (negative zooms out)
   --hide-decorations     hide torches, flowers, rails and other small blocks
   --smooth               start with the smooth mesher (toggle with M)
   --smooth-iterations N  smoothing passes, 0-16 (default 8)
-  --watercolor           start in watercolor painting mode (toggle with P)
+  --painted              start in painted mode (P cycles painted / watercolor / off)
+  --watercolor           start in watercolor-on-paper mode
   --no-ao                disable ambient occlusion
   --msaa N               multisample count (default 8, 0 to disable)
   --no-prime             do not request the NVIDIA GPU on hybrid-graphics laptops
@@ -124,7 +137,7 @@ To open files, pass them on the command line, **drag and drop** them onto the wi
 | `PgUp` / `PgDn` (+`Shift` for ×10) | Move the cut-away slice, to see inside buildings layer by layer |
 | `Home` | Remove the slice |
 | `M` | Switch between blocky cubes and the smooth mesh |
-| `P` | Watercolor painting mode on/off |
+| `P` | Cycle painting modes: painted → watercolor on paper → off |
 | `K` | Cycle smoothness (0, 2, 4, 8, 16 relaxation passes) |
 | `V` | Show/hide small decorations (torches, flowers, rails, signs, ...) |
 | `G` / `B` / `X` / `O` / `L` | Grid / bounding box / wireframe / ambient occlusion / light background |
@@ -147,7 +160,7 @@ src/schematic_loader.cpp .schematic / .schem / .litematic / structure .nbt
 src/block_colors.*       Minecraft block colors + legacy numeric ID table
 src/mesher.*             multithreaded greedy mesher with ambient occlusion
 src/smooth_mesher.*      multithreaded smooth mesher (constrained surface nets)
-src/splats.*             surface voxel splats for watercolor mode
+src/splats.*             surface voxel splats for the painted and watercolor modes
 src/renderer.*           OpenGL 3.3 renderer
 src/main.cpp             window, input, file handling (GLFW)
 tests/make_samples.py    writes the same build in every format; check_samples.py cross-checks the loaders

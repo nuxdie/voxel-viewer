@@ -47,6 +47,13 @@ inline Mat4 perspective(float fovyRad, float aspect, float zNear, float zFar) {
     return r;
 }
 
+inline Mat4 ortho(float l, float r, float b, float t, float n, float f) {
+    Mat4 m;
+    m.m[0] = 2 / (r - l); m.m[5] = 2 / (t - b); m.m[10] = -2 / (f - n);
+    m.m[12] = -(r + l) / (r - l); m.m[13] = -(t + b) / (t - b); m.m[14] = -(f + n) / (f - n);
+    return m;
+}
+
 inline Mat4 lookAt(const Vec3& eye, const Vec3& center, const Vec3& up) {
     Vec3 f = normalize(center - eye), s = normalize(cross(f, up)), u = cross(s, f);
     Mat4 r;

@@ -73,10 +73,12 @@ void buildChunk(const Context& ctx, IVec3 cc, uint16_t* pad, SplatChunk& out) {
                 if (!visible) continue;
                 // Smooth normal: points away from the solid mass in a 5x5x5 neighborhood.
                 float nx = 0, ny = 0, nz = 0;
+                int occupied = 0;
                 for (int dy = -2; dy <= 2; ++dy)
                     for (int dz = -2; dz <= 2; ++dz)
                         for (int dx = -2; dx <= 2; ++dx) {
                             if (!pad[pidx(x + dx, y + dy, z + dz)]) continue;
+                            ++occupied;
                             float w = 1.0f / float(dx * dx + dy * dy + dz * dz + 1);
                             nx -= float(dx) * w;
                             ny -= float(dy) * w;
@@ -87,7 +89,11 @@ void buildChunk(const Context& ctx, IVec3 cc, uint16_t* pad, SplatChunk& out) {
                     nx = ex; ny = ey; nz = ez;
                     len = std::sqrt(nx * nx + ny * ny + nz * nz);
                 }
-                if (len > 0) { nx /= len; ny /= len; nz /= len; }
+                if (len > 0) {
+                    nx /= len; ny /= len; nz /= len;
+                } else {  // exposed on opposite sides (one voxel thick): no preferred side
+                    nx = 0; ny = 1; nz = 0;
+                }
 
                 const Material& m = ctx.model.materials[c];
                 Splat s;
@@ -103,6 +109,10 @@ void buildChunk(const Context& ctx, IVec3 cc, uint16_t* pad, SplatChunk& out) {
                 s.g = m.color.g;
                 s.b = m.color.b;
                 s.a = ctx.kind[c] == kTransparent ? m.color.a : 255;
+                // A voxel on a flat surface has about half its 5x5x5 neighborhood filled.
+                float frac = float(occupied) / 125.0f;
+                s.light = uint8_t(std::lround(std::clamp(1.0f - (frac - 0.45f) * 1.7f, 0.3f, 1.0f) * 255.0f));
+                s.pad[0] = s.pad[1] = s.pad[2] = 0;
                 out.splats.push_back(s);
             }
 }

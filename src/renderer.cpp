@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdio>
 
@@ -248,6 +249,179 @@ void main() {
 }
 )";
 
+// ---- Painted style ------------------------------------------------------------------------
+
+const char* kPaintedVs = R"(#version 330 core
+layout(location = 0) in uvec4 aPosSeed;
+layout(location = 1) in vec3 aNormal;
+layout(location = 2) in uint aFlags;      // bit 0 emissive, bit 1 transparent
+layout(location = 3) in vec4 aColor;
+layout(location = 4) in float aLight;     // ambient occlusion
+uniform mat4 uView;
+uniform mat4 uProj;
+uniform vec3 uOrigin;
+uniform float uClipY;
+uniform vec3 uLightDir;
+uniform float uSize;
+uniform mat4 uLightVP;
+uniform sampler2D uShadowMap;
+uniform vec2 uShadowTexel;
+uniform vec3 uEye;
+uniform float uFogDist;
+uniform vec3 uHorizon;    // linear
+out vec2 vUv;
+out vec3 vColor;
+flat out float vSeed;
+const vec2 kCorners[6] = vec2[6](vec2(-1, -1), vec2(1, -1), vec2(1, 1), vec2(-1, -1), vec2(1, 1), vec2(-1, 1));
+float hash(float n) { return fract(sin(n) * 43758.5453); }
+float shadowAt(vec3 p) {
+    vec3 q = (uLightVP * vec4(p, 1.0)).xyz * 0.5 + 0.5;
+    if (q.x < 0.0 || q.x > 1.0 || q.y < 0.0 || q.y > 1.0 || q.z > 1.0) return 1.0;
+    float lit = 0.0;
+    for (int y = -1; y <= 1; ++y)
+        for (int x = -1; x <= 1; ++x) {
+            float d = textureLod(uShadowMap, q.xy + vec2(x, y) * uShadowTexel * 1.5, 0.0).r;
+            lit += q.z - 0.0015 > d ? 0.0 : 1.0;
+        }
+    return lit / 9.0;
+}
+void main() {
+    vec3 c = vec3(aPosSeed.xyz) + 0.5 + uOrigin;
+    if (c.y > uClipY) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
+    float seed = float(aPosSeed.w) / 255.0 + float(aPosSeed.x + aPosSeed.y * 7u + aPosSeed.z * 13u) * 0.0137;
+    vSeed = seed;
+    float h1 = hash(seed * 91.7), h2 = hash(seed * 37.3 + 1.1), h3 = hash(seed * 13.9 + 2.2);
+    // Loose, hand-placed dabs: jitter the center so silhouettes break up like real brushwork.
+    c += (vec3(hash(seed * 17.1), hash(seed * 29.3), hash(seed * 41.9)) - 0.5) * 0.45;
+
+    // A short, slightly elongated brush dab with its own size and direction.
+    vec2 corner = kCorners[gl_VertexID];
+    vUv = corner;
+    float elong = 1.0 + 0.45 * h1;
+    float size = uSize * (0.8 + 0.4 * h2);
+    float ang = h3 * 6.2831853;
+    mat2 rot = mat2(cos(ang), sin(ang), -sin(ang), cos(ang));
+    vec4 vp = uView * vec4(c, 1.0);
+    vp.xy += rot * (corner * vec2(size * elong, size / sqrt(elong)));
+    gl_Position = uProj * vp;
+
+    // Every dab gets a slightly different value and temperature.
+    vec3 base = pow(aColor.rgb, vec3(2.2));
+    base *= 0.86 + 0.28 * h2;
+    base *= mix(vec3(1.05, 1.0, 0.93), vec3(0.94, 1.0, 1.07), h1);
+
+    vec3 col;
+    if ((aFlags & 1u) != 0u) {
+        col = base * 1.3;
+    } else {
+        vec3 n = dot(aNormal, aNormal) > 1e-4 ? normalize(aNormal) : vec3(0.0, 1.0, 0.0);
+        float ndl = max(dot(n, uLightDir), 0.0);
+        float sh = shadowAt(c + n * 0.7 + uLightDir * 0.3);
+        vec3 sun = vec3(1.0, 0.9, 0.76) * 1.05 * ndl * sh;
+        vec3 sky = vec3(0.40, 0.50, 0.75) * (0.55 + 0.45 * n.y) * aLight;
+        vec3 bounce = vec3(0.12, 0.09, 0.06) * (0.5 - 0.5 * n.y) * aLight;
+        col = base * (sun + sky + bounce);
+    }
+    if ((aFlags & 2u) != 0u) col = mix(col, uHorizon, 0.25);
+
+    // Aerial perspective: distant paint fades toward the horizon.
+    float fog = 1.0 - exp(-pow(length(c - uEye) / uFogDist, 1.6));
+    col = mix(col, uHorizon, clamp(fog, 0.0, 0.75));
+
+    // Soft shoulder so bright sunlit dabs do not clip, then back to display gamma.
+    col = col / (1.0 + 0.15 * col);
+    vColor = pow(clamp(col, 0.0, 1.0), vec3(1.0 / 2.2));
+}
+)";
+
+const char* kPaintedFs = R"(#version 330 core
+in vec2 vUv;
+in vec3 vColor;
+flat in float vSeed;
+out vec4 fragColor;
+float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float vnoise(vec2 p) {
+    vec2 i = floor(p), f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash(i), hash(i + vec2(1, 0)), f.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x), f.y);
+}
+void main() {
+    float r = length(vUv);
+    float a = atan(vUv.y, vUv.x);
+    float s = vSeed * 97.0;
+    float edge = 0.86 + 0.07 * sin(3.0 * a + s) + 0.05 * sin(7.0 * a + 2.3 * s);
+    if (r > edge) discard;
+    // Bristle streaks run along the stroke.
+    float streak = vnoise(vec2(vUv.x * 1.3 + s, vUv.y * 7.0 + s * 0.37));
+    vec3 c = vColor * (0.9 + 0.2 * streak);
+    c *= 1.0 - 0.07 * smoothstep(0.45, 1.0, r / edge);
+    fragColor = vec4(c, 1.0);
+}
+)";
+
+// Shadow map: splats seen from the sun, depth only.
+const char* kShadowVs = R"(#version 330 core
+layout(location = 0) in uvec4 aPosSeed;
+uniform mat4 uView;
+uniform mat4 uProj;
+uniform vec3 uOrigin;
+uniform float uClipY;
+uniform float uSize;
+out vec2 vUv;
+const vec2 kCorners[6] = vec2[6](vec2(-1, -1), vec2(1, -1), vec2(1, 1), vec2(-1, -1), vec2(1, 1), vec2(-1, 1));
+void main() {
+    vec3 c = vec3(aPosSeed.xyz) + 0.5 + uOrigin;
+    if (c.y > uClipY) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
+    vUv = kCorners[gl_VertexID];
+    vec4 vp = uView * vec4(c, 1.0);
+    vp.xy += vUv * uSize;
+    gl_Position = uProj * vp;
+}
+)";
+
+const char* kShadowFs = R"(#version 330 core
+in vec2 vUv;
+void main() { if (dot(vUv, vUv) > 0.8) discard; }
+)";
+
+// Kuwahara filter: merges dabs into painterly patches of color while keeping edges crisp.
+const char* kKuwaharaFs = R"(#version 330 core
+uniform sampler2D uColor;
+uniform vec2 uTexel;
+out vec4 fragColor;
+void main() {
+    vec2 uv = gl_FragCoord.xy * uTexel;
+    const int R = 3;
+    vec3 m0 = vec3(0), m1 = vec3(0), m2 = vec3(0), m3 = vec3(0);
+    vec3 s0 = vec3(0), s1 = vec3(0), s2 = vec3(0), s3 = vec3(0);
+    for (int j = -R; j <= R; ++j)
+        for (int i = -R; i <= R; ++i) {
+            vec3 c = texture(uColor, uv + vec2(i, j) * uTexel).rgb;
+            vec3 cc = c * c;
+            if (i <= 0 && j <= 0) { m0 += c; s0 += cc; }
+            if (i >= 0 && j <= 0) { m1 += c; s1 += cc; }
+            if (i <= 0 && j >= 0) { m2 += c; s2 += cc; }
+            if (i >= 0 && j >= 0) { m3 += c; s3 += cc; }
+        }
+    float n = float((R + 1) * (R + 1));
+    m0 /= n; m1 /= n; m2 /= n; m3 /= n;
+    vec3 v0 = s0 / n - m0 * m0, v1 = s1 / n - m1 * m1, v2 = s2 / n - m2 * m2, v3 = s3 / n - m3 * m3;
+    float d0 = v0.r + v0.g + v0.b, d1 = v1.r + v1.g + v1.b, d2 = v2.r + v2.g + v2.b, d3 = v3.r + v3.g + v3.b;
+    vec3 col = m0;
+    float best = d0;
+    if (d1 < best) { best = d1; col = m1; }
+    if (d2 < best) { best = d2; col = m2; }
+    if (d3 < best) { best = d3; col = m3; }
+    // Richer color, gentle contrast and a soft vignette.
+    float l = dot(col, vec3(0.299, 0.587, 0.114));
+    col = mix(vec3(l), col, 1.18);
+    col = mix(col, col * col * (3.0 - 2.0 * col), 0.25);
+    vec2 d = uv - 0.5;
+    col *= 1.0 - 0.28 * pow(length(d) * 1.25, 2.5);
+    fragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
+}
+)";
+
 GLuint compile(GLenum type, const char* src) {
     GLuint s = glCreateShader(type);
     glShaderSource(s, 1, &src, nullptr);
@@ -335,6 +509,25 @@ bool Renderer::init() {
     uPaintDepth_ = glGetUniformLocation(paintProg_, "uDepth");
     uPaintTexel_ = glGetUniformLocation(paintProg_, "uTexel");
 
+    paintedProg_ = link(kPaintedVs, kPaintedFs);
+    kuwaharaProg_ = link(kBgVs, kKuwaharaFs);
+    shadowProg_ = link(kShadowVs, kShadowFs);
+    if (!paintedProg_ || !kuwaharaProg_ || !shadowProg_) return false;
+    {
+        auto u = [&](const char* n) { return glGetUniformLocation(paintedProg_, n); };
+        pl_.view = u("uView"); pl_.proj = u("uProj"); pl_.origin = u("uOrigin"); pl_.clipY = u("uClipY");
+        pl_.lightDir = u("uLightDir"); pl_.size = u("uSize"); pl_.lightVP = u("uLightVP");
+        pl_.shadowMap = u("uShadowMap"); pl_.shadowTexel = u("uShadowTexel"); pl_.eye = u("uEye");
+        pl_.fogDist = u("uFogDist"); pl_.horizon = u("uHorizon");
+    }
+    uKuwColor_ = glGetUniformLocation(kuwaharaProg_, "uColor");
+    uKuwTexel_ = glGetUniformLocation(kuwaharaProg_, "uTexel");
+    uShView_ = glGetUniformLocation(shadowProg_, "uView");
+    uShProj_ = glGetUniformLocation(shadowProg_, "uProj");
+    uShOrigin_ = glGetUniformLocation(shadowProg_, "uOrigin");
+    uShClipY_ = glGetUniformLocation(shadowProg_, "uClipY");
+    uShSize_ = glGetUniformLocation(shadowProg_, "uSize");
+
     lineProg_ = link(kLineVs, kLineFs);
     bgProg_ = link(kBgVs, kBgFs);
     if (!blockyProg_.init(kVoxelVs, kVoxelFs) || !smoothProg_.init(kSmoothVs, kVoxelFs) || !lineProg_ || !bgProg_)
@@ -376,9 +569,12 @@ void Renderer::shutdown() {
     if (lineVao_) glDeleteVertexArrays(1, &lineVao_);
     if (emptyVao_) glDeleteVertexArrays(1, &emptyVao_);
     if (fbo_) glDeleteFramebuffers(1, &fbo_);
+    if (shadowFbo_) glDeleteFramebuffers(1, &shadowFbo_);
+    if (shadowTex_) glDeleteTextures(1, &shadowTex_);
     if (fboColor_) glDeleteTextures(1, &fboColor_);
     if (fboDepth_) glDeleteTextures(1, &fboDepth_);
-    for (GLuint p : {blockyProg_.id, smoothProg_.id, splatProg_, paintProg_, lineProg_, bgProg_})
+    for (GLuint p : {blockyProg_.id, smoothProg_.id, splatProg_, paintProg_, paintedProg_, kuwaharaProg_, shadowProg_,
+                     lineProg_, bgProg_})
         if (p) glDeleteProgram(p);
 }
 
@@ -511,6 +707,7 @@ void Renderer::buildGrid() {
 void Renderer::upload(const std::vector<SplatChunk>& chunks, IVec3 bmin, IVec3 bmax) {
     beginUpload(bmin, bmax);
     mode_ = Mode::Watercolor;
+    shadowDirty_ = true;
     chunks_.reserve(chunks.size());
     for (const auto& sc : chunks) {
         GpuChunk c;
@@ -538,7 +735,9 @@ Renderer::GpuMesh Renderer::makeMesh(const std::vector<Splat>& splats) {
     glVertexAttribIPointer(2, 1, GL_UNSIGNED_BYTE, stride, reinterpret_cast<void*>(offsetof(Splat, flags)));
     glEnableVertexAttribArray(3);
     glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, stride, reinterpret_cast<void*>(offsetof(Splat, r)));
-    for (GLuint a = 0; a < 4; ++a) glVertexAttribDivisor(a, 1);  // one splat per instance
+    glEnableVertexAttribArray(4);
+    glVertexAttribPointer(4, 1, GL_UNSIGNED_BYTE, GL_TRUE, stride, reinterpret_cast<void*>(offsetof(Splat, light)));
+    for (GLuint a = 0; a < 5; ++a) glVertexAttribDivisor(a, 1);  // one splat per instance
     glBindVertexArray(0);
     m.indexCount = GLsizei(splats.size());
     gpuBytes_ += splats.size() * sizeof(Splat);
@@ -578,8 +777,59 @@ bool Renderer::ensureFbo(int w, int h) {
     return true;
 }
 
+void Renderer::renderShadowMap(float clipY) {
+    if (!shadowFbo_) {
+        glGenFramebuffers(1, &shadowFbo_);
+        glGenTextures(1, &shadowTex_);
+        glBindTexture(GL_TEXTURE_2D, shadowTex_);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, kShadowSize, kShadowSize, 0, GL_DEPTH_COMPONENT,
+                     GL_UNSIGNED_INT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glBindFramebuffer(GL_FRAMEBUFFER, shadowFbo_);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, shadowTex_, 0);
+        glDrawBuffer(GL_NONE);
+        glReadBuffer(GL_NONE);
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+            std::fprintf(stderr, "painted: shadow framebuffer incomplete\n");
+    }
+    // Orthographic sun camera fitted around the model.
+    Vec3 mn(float(bmin_.x), float(bmin_.y), float(bmin_.z)), mx(float(bmax_.x + 1), float(bmax_.y + 1), float(bmax_.z + 1));
+    Vec3 center = (mn + mx) * 0.5f;
+    float r = length(mx - mn) * 0.5f + 2.0f;
+    Vec3 light = normalize(Vec3(0.45f, 0.85f, 0.3f));
+    Mat4 view = lookAt(center + light * (2.0f * r), center, Vec3(0, 1, 0));
+    Mat4 proj = ortho(-r, r, -r, r, 0.5f * r, 3.5f * r);
+    lightVP_ = proj * view;
+
+    glBindFramebuffer(GL_FRAMEBUFFER, shadowFbo_);
+    glViewport(0, 0, kShadowSize, kShadowSize);
+    glClear(GL_DEPTH_BUFFER_BIT);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
+    glUseProgram(shadowProg_);
+    glUniformMatrix4fv(uShView_, 1, GL_FALSE, view.m);
+    glUniformMatrix4fv(uShProj_, 1, GL_FALSE, proj.m);
+    glUniform1f(uShClipY_, clipY);
+    glUniform1f(uShSize_, 0.75f);
+    for (const GpuChunk& c : chunks_) {
+        if (c.origin.y > clipY || !c.opaque.indexCount) continue;
+        glUniform3f(uShOrigin_, c.origin.x, c.origin.y, c.origin.z);
+        glBindVertexArray(c.opaque.vao);
+        glDrawArraysInstanced(GL_TRIANGLES, 0, 6, c.opaque.indexCount);
+    }
+    glBindVertexArray(0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    shadowDirty_ = false;
+    shadowClip_ = clipY;
+}
+
 void Renderer::renderWatercolor(const Camera& cam, int width, int height, const RenderSettings& s) {
     drawnTriangles_ = 0;
+    const bool painted = s.paintStyle == 0;
+    if (painted && hasModel_ && (shadowDirty_ || shadowClip_ != s.clipY)) renderShadowMap(s.clipY);
     if (!ensureFbo(width, height)) return;
     float aspect = float(width) / float(std::max(1, height));
     Mat4 view = cam.view(), proj = cam.projection(aspect);
@@ -590,10 +840,46 @@ void Renderer::renderWatercolor(const Camera& cam, int width, int height, const 
     glViewport(0, 0, width, height);
     glClearColor(1, 1, 1, 1);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    const Vec3 skyTop(0.40f, 0.63f, 0.92f), horizon(0.84f, 0.90f, 0.96f);
+    if (painted) {
+        glDisable(GL_DEPTH_TEST);
+        glUseProgram(bgProg_);
+        glUniform3f(uBgTop_, skyTop.x, skyTop.y, skyTop.z);
+        glUniform3f(uBgBottom_, horizon.x, horizon.y, horizon.z);
+        glBindVertexArray(emptyVao_);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+    }
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
     glDisable(GL_CULL_FACE);
-    if (hasModel_) {
+    if (hasModel_ && painted) {
+        glUseProgram(paintedProg_);
+        glUniformMatrix4fv(pl_.view, 1, GL_FALSE, view.m);
+        glUniformMatrix4fv(pl_.proj, 1, GL_FALSE, proj.m);
+        glUniformMatrix4fv(pl_.lightVP, 1, GL_FALSE, lightVP_.m);
+        Vec3 light = normalize(Vec3(0.45f, 0.85f, 0.3f));
+        glUniform3f(pl_.lightDir, light.x, light.y, light.z);
+        glUniform1f(pl_.clipY, s.clipY);
+        glUniform1f(pl_.size, 0.9f);
+        Vec3 eye = cam.eye();
+        glUniform3f(pl_.eye, eye.x, eye.y, eye.z);
+        glUniform1f(pl_.fogDist, cam.sceneRadius() * 9.0f + 60.0f);
+        glUniform3f(pl_.horizon, std::pow(horizon.x, 2.2f), std::pow(horizon.y, 2.2f), std::pow(horizon.z, 2.2f));
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, shadowTex_);
+        glActiveTexture(GL_TEXTURE0);
+        glUniform1i(pl_.shadowMap, 1);
+        glUniform2f(pl_.shadowTexel, 1.0f / kShadowSize, 1.0f / kShadowSize);
+        const float cs = float(kChunkSize);
+        for (const GpuChunk& c : chunks_) {
+            if (c.origin.y > s.clipY || !c.opaque.indexCount) continue;
+            if (!boxVisible(planes, c.origin - Vec3(2, 2, 2), c.origin + Vec3(cs + 2, cs + 2, cs + 2))) continue;
+            glUniform3f(pl_.origin, c.origin.x, c.origin.y, c.origin.z);
+            glBindVertexArray(c.opaque.vao);
+            glDrawArraysInstanced(GL_TRIANGLES, 0, 6, c.opaque.indexCount);
+            drawnTriangles_ += size_t(c.opaque.indexCount) * 2;
+        }
+    } else if (hasModel_) {
         glUseProgram(splatProg_);
         glUniformMatrix4fv(uSplatView_, 1, GL_FALSE, view.m);
         glUniformMatrix4fv(uSplatProj_, 1, GL_FALSE, proj.m);
@@ -616,6 +902,18 @@ void Renderer::renderWatercolor(const Camera& cam, int width, int height, const 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, width, height);
     glDisable(GL_DEPTH_TEST);
+    if (painted) {
+        glUseProgram(kuwaharaProg_);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, fboColor_);
+        glUniform1i(uKuwColor_, 0);
+        glUniform2f(uKuwTexel_, 1.0f / float(width), 1.0f / float(height));
+        glBindVertexArray(emptyVao_);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glBindVertexArray(0);
+        glEnable(GL_DEPTH_TEST);
+        return;
+    }
     glUseProgram(paintProg_);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, fboColor_);

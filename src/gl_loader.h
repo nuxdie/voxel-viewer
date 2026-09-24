@@ -18,6 +18,7 @@
     X(PFNGLPOLYGONOFFSETPROC, glPolygonOffset)                                     \
     X(PFNGLREADPIXELSPROC, glReadPixels)                                           \
     X(PFNGLREADBUFFERPROC, glReadBuffer)                                           \
+    X(PFNGLDRAWBUFFERPROC, glDrawBuffer)                                           \
     X(PFNGLPIXELSTOREIPROC, glPixelStorei)                                         \
     X(PFNGLGETSTRINGPROC, glGetString)                                             \
     X(PFNGLGETERRORPROC, glGetError)                                               \

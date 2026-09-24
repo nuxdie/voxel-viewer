@@ -41,7 +41,7 @@ const char* kHelp = R"(voxel-viewer controls
   X         toggle wireframe       O   toggle ambient occlusion
   M         toggle smooth mesh (surface nets) / blocky cubes
   K         cycle smoothness (relaxation passes: 0, 2, 4, 8, 16)
-  P         toggle watercolor painting mode
+  P         cycle painting modes: off -> painted -> watercolor on paper -> off
   V         toggle small decorations (torches, flowers, rails...)
   L         toggle light/dark background
   ] / [     next / previous file in the folder
@@ -148,6 +148,7 @@ private:
     int width_ = 1600, height_ = 1000;
     bool usePrime_ = true;
     int msaa_ = 8;
+    float startYaw_ = 45, startPitch_ = 30, startZoom_ = 0;
     float fps_ = 0;
     std::string status_;
 };
@@ -163,10 +164,13 @@ bool App::parseArgs(int argc, char** argv) {
                         "options:\n"
                         "  --screenshot FILE.png  render the first file to a PNG and exit\n"
                         "  --size WxH             window / screenshot size (default 1600x1000)\n"
+                        "  --angle YAW,PITCH      initial view angle in degrees (default 45,30)\n"
+                        "  --zoom N               initial zoom steps, like mouse wheel clicks (negative = out)\n"
                         "  --hide-decorations     hide torches, flowers, rails and other small blocks\n"
                         "  --smooth               start with the smooth mesher (toggle with M)\n"
                         "  --smooth-iterations N  smoothing passes, 0-16 (default 8)\n"
-                        "  --watercolor           start in watercolor painting mode (toggle with P)\n"
+                        "  --painted              start in painted mode: brush dabs, sun, shadows, sky (P cycles)\n"
+                        "  --watercolor           start in watercolor-on-paper mode (P cycles)\n"
                         "  --no-ao                disable ambient occlusion\n"
                         "  --msaa N               multisample count (default 8, 0 to disable)\n"
                         "  --no-prime             do not request the NVIDIA GPU on hybrid-graphics laptops\n\n%s",
@@ -178,12 +182,20 @@ bool App::parseArgs(int argc, char** argv) {
             std::sscanf(next().c_str(), "%dx%d", &width_, &height_);
             width_ = std::max(64, width_);
             height_ = std::max(64, height_);
+        } else if (a == "--angle") {
+            std::sscanf(next().c_str(), "%f,%f", &startYaw_, &startPitch_);
+        } else if (a == "--zoom") {
+            startZoom_ = float(std::atof(next().c_str()));
         } else if (a == "--hide-decorations") {
             meshOpts_.hideDecorations = true;
         } else if (a == "--smooth") {
             meshOpts_.smooth = true;
+        } else if (a == "--painted") {
+            meshOpts_.watercolor = true;
+            settings_.paintStyle = 0;
         } else if (a == "--watercolor") {
             meshOpts_.watercolor = true;
+            settings_.paintStyle = 1;
         } else if (a == "--smooth-iterations") {
             meshOpts_.smoothIterations = std::clamp(std::atoi(next().c_str()), 0, kMaxSmoothIterations);
         } else if (a == "--no-ao") {
@@ -258,6 +270,8 @@ void App::applyLoaded(Loaded&& l) {
     else renderer_.upload(l.meshes, mn, mx);
     if (!sameFile) {
         camera_.frame(Vec3(float(mn.x), float(mn.y), float(mn.z)), Vec3(float(mx.x + 1), float(mx.y + 1), float(mx.z + 1)));
+        camera_.setView(startYaw_, startPitch_);
+        camera_.zoom(startZoom_);
         setClip(INT32_MAX);
     }
     IVec3 s = model_->size();
@@ -304,7 +318,7 @@ void App::updateTitle() {
         t += " — " + std::to_string(s.x) + "×" + std::to_string(s.y) + "×" + std::to_string(s.z);
         t += " — " + formatCount(model_->voxelCount()) + " voxels";
         if (clipLayer_ != INT32_MAX) t += " — slice y≤" + std::to_string(clipLayer_);
-        if (meshOpts_.watercolor) t += " — watercolor";
+        if (meshOpts_.watercolor) t += settings_.paintStyle == 0 ? " — painted" : " — watercolor";
         else if (meshOpts_.smooth) t += " — smooth (" + std::to_string(meshOpts_.smoothIterations) + ")";
         if (meshOpts_.hideDecorations) t += " — decorations hidden";
         if (camera_.mode() == Camera::Mode::Fly) t += " — FLY";
@@ -363,8 +377,16 @@ void App::onKey(int key, int mods) {
             break;
         case GLFW_KEY_L: settings_.darkBackground = !settings_.darkBackground; break;
         case GLFW_KEY_P:
-            meshOpts_.watercolor = !meshOpts_.watercolor;
-            remesh();
+            if (!meshOpts_.watercolor) {
+                meshOpts_.watercolor = true;
+                settings_.paintStyle = 0;
+                remesh();
+            } else if (settings_.paintStyle == 0) {
+                settings_.paintStyle = 1;  // same splats, different look: no remesh needed
+            } else {
+                meshOpts_.watercolor = false;
+                remesh();
+            }
             updateTitle();
             break;
         case GLFW_KEY_M:

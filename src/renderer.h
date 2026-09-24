@@ -18,6 +18,7 @@ struct RenderSettings {
     float aoStrength = 1.0f;
     float clipY = 1e9f;  // world Y above which fragments are discarded
     bool darkBackground = true;
+    int paintStyle = 0;  // splat modes: 0 = painted (sun, shadows, sky), 1 = watercolor on paper
 };
 
 class Renderer {
@@ -56,6 +57,7 @@ private:
     GpuMesh makeMesh(const std::vector<Splat>& splats);
     void renderWatercolor(const Camera& cam, int width, int height, const RenderSettings& s);
     bool ensureFbo(int width, int height);
+    void renderShadowMap(float clipY);
     void beginUpload(IVec3 boundsMin, IVec3 boundsMax);
     void buildGrid();
 
@@ -68,6 +70,20 @@ private:
     GLint uPaintColor_ = -1, uPaintDepth_ = -1, uPaintTexel_ = -1;
     GLuint fbo_ = 0, fboColor_ = 0, fboDepth_ = 0;
     int fboW_ = 0, fboH_ = 0;
+
+    // Painted style: sun shadow map, lit brush dabs, Kuwahara post-process.
+    struct PaintedLocs {
+        GLint view = -1, proj = -1, origin = -1, clipY = -1, lightDir = -1, size = -1, lightVP = -1, shadowMap = -1,
+              shadowTexel = -1, eye = -1, fogDist = -1, horizon = -1;
+    } pl_;
+    GLuint paintedProg_ = 0, kuwaharaProg_ = 0, shadowProg_ = 0;
+    GLint uKuwColor_ = -1, uKuwTexel_ = -1;
+    GLint uShView_ = -1, uShProj_ = -1, uShOrigin_ = -1, uShClipY_ = -1, uShSize_ = -1;
+    GLuint shadowFbo_ = 0, shadowTex_ = 0;
+    static constexpr int kShadowSize = 2048;
+    bool shadowDirty_ = true;
+    float shadowClip_ = 0;
+    Mat4 lightVP_;
     GLuint lineProg_ = 0, bgProg_ = 0;
     GLuint ebo_ = 0;
     size_t eboQuads_ = 0;

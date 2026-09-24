@@ -6,6 +6,8 @@ Litematica .litematic and structure .nbt, so loaders can be cross-checked.
 Usage: make_samples.py OUTPUT_DIR
 """
 import gzip
+import math
+import random
 import os
 import struct
 import sys
@@ -239,6 +241,57 @@ def write_vox(path):
         f.write(b"VOX " + struct.pack("<i", 150) + vox_chunk(b"MAIN", b"", children))
 
 
+def write_forest(path):
+    """A small forest scene (terrain, trees, flowers, pond, rock) for showing off render modes."""
+    rng = random.Random(3)
+    W, H, L = 96, 48, 96
+    grid = {}
+    def h(x, z): return int(10 + 4*math.sin(x/11.0) + 3*math.cos(z/9.0) + 2*math.sin((x+z)/7.0))
+    for x in range(W):
+        for z in range(L):
+            top = h(x, z)
+            pond = (x-60)**2 + (z-55)**2 < 150
+            for y in range(top):
+                grid[(x,y,z)] = "minecraft:stone" if y < top-3 else "minecraft:dirt"
+            if pond:
+                for y in range(top-3, 13): grid[(x,y,z)] = "minecraft:water"
+            else:
+                grid[(x,top,z)] = "minecraft:grass_block"
+                r = rng.random()
+                if r < 0.04: grid[(x,top+1,z)] = rng.choice(["minecraft:poppy","minecraft:dandelion","minecraft:cornflower","minecraft:allium"])
+                elif r < 0.12: grid[(x,top+1,z)] = "minecraft:short_grass"
+    leaves = ["minecraft:oak_leaves", "minecraft:birch_leaves", "minecraft:acacia_leaves", "minecraft:red_concrete", "minecraft:yellow_concrete"]
+    for i in range(14):
+        x, z = rng.randrange(8, W-8), rng.randrange(8, L-8)
+        if (x-60)**2 + (z-55)**2 < 260: continue
+        top = h(x, z) + 1
+        th = rng.randint(8, 14)
+        for y in range(top, top+th): grid[(x,y,z)] = "minecraft:oak_log" if i % 3 else "minecraft:birch_log"
+        lv = rng.choice(leaves); R = rng.randint(4, 6)
+        cy = top + th
+        for dx in range(-R, R+1):
+            for dy in range(-R, R+1):
+                for dz in range(-R, R+1):
+                    if dx*dx + dy*dy*1.4 + dz*dz <= R*R and rng.random() < 0.85:
+                        p = (x+dx, cy+dy, z+dz)
+                        if 0 <= p[0] < W and 0 <= p[2] < L and p[1] < H and p not in grid: grid[p] = lv
+    # a rock with a waterfall
+    for x in range(10, 30):
+        for z in range(60, 80):
+            top = h(x, z) + int(22 * max(0, 1 - ((x-20)**2 + (z-70)**2) / 110.0))
+            for y in range(h(x, z), top): grid[(x,y,z)] = "minecraft:granite" if (x+y) % 7 else "minecraft:dirt"
+    pal = {"minecraft:air": 0}
+    data = bytearray()
+    for y in range(H):
+        for z in range(L):
+            for x in range(W):
+                s = grid.get((x,y,z), "minecraft:air")
+                if s not in pal: pal[s] = len(pal)
+                data.append(pal[s])
+    write_nbt(path, "Schematic", dict(Version=I(2), DataVersion=I(3465), Width=Sh(W), Height=Sh(H), Length=Sh(L),
+        PaletteMax=I(len(pal)), Palette=T(COMPOUND, {k: I(v) for k, v in pal.items()}), BlockData=T(BYTE_ARRAY, bytes(data))))
+
+
 def main():
     out = sys.argv[1] if len(sys.argv) > 1 else "samples"
     os.makedirs(out, exist_ok=True)
@@ -249,6 +302,7 @@ def main():
     write_nbt(os.path.join(out, "house.litematic"), *litematic(blocks))
     write_nbt(os.path.join(out, "house.nbt"), *structure(blocks))
     write_vox(os.path.join(out, "scene.vox"))
+    write_forest(os.path.join(out, "forest.schem"))
     print("wrote samples to", out)
 
 
