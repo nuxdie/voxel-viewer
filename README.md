@@ -3,7 +3,10 @@
 A fast OpenGL voxel viewer for Linux and Android, written in C++17. It opens **MagicaVoxel**
 models and **Minecraft WorldEdit** schematics.
 
-![screenshot](docs/screenshot.png)
+The same scene in the four render modes (blocks, smooth, painted, watercolor), all under the
+same light:
+
+![blocks](docs/screenshot.png)
 ![smooth mesher](docs/screenshot-smooth.png)
 ![painted mode](docs/screenshot-painted.png)
 ![watercolor mode](docs/screenshot-watercolor.png)
@@ -20,7 +23,13 @@ The viewer detects the format from the file's content, so the extension doesn't 
 
 ## Rendering
 
-- OpenGL 3.3 core. There are no dependencies beyond GLFW and zlib.
+- OpenGL 3.3 core (OpenGL ES 3.0 on Android). There are no dependencies beyond GLFW and zlib.
+- **One lighting model for every mode**, so modes differ only in how they draw, not in how
+  they're lit. All four share the same code: a warm sun with soft shadows from a 2048² shadow
+  map rendered from that mode's own geometry (cubes, smooth mesh or dabs); cool sky light and
+  ground bounce scaled by ambient occlusion; haze toward the horizon; and one tone curve. The
+  scene sits under a sky gradient; `L` switches to a dark studio backdrop, `J` toggles
+  shadows, and `O` toggles ambient occlusion.
 - Voxels are stored sparsely in 32³ chunks. Chunks are meshed on all CPU cores using **greedy
   meshing** with per-vertex **ambient occlusion**. Each vertex is 8 bytes.
 - **Smooth mode** (press `M`, or start with `--smooth`) uses a second mesher based on
@@ -34,19 +43,16 @@ The viewer detects the format from the file's content, so the extension doesn't 
 - **Painted mode** (press `P`, or start with `--painted`) draws every visible surface voxel as
   a short brush dab instead of a cube. Each dab has its own size, direction, value and color
   temperature, bristle streaks, and a slightly jittered position, so silhouettes break up
-  like loose brushwork. Dabs are lit by a warm sun, with soft shadows from a shadow map,
-  cool sky light, ambient occlusion and a little ground bounce. They are drawn over a sky
-  gradient, with haze toward the horizon. A Kuwahara filter then merges the dabs into
+  like loose brushwork. A Kuwahara filter then merges the dabs into
   painterly patches of color while keeping edges crisp, and a final pass adds saturation,
   gentle contrast and a vignette. `tests/make_samples.py` writes a small `forest.schem`
   that shows it off.
 - **Watercolor mode** (press `P` again, or start with `--watercolor`) doesn't draw cubes at all.
   Every visible surface voxel becomes a soft, irregular blob of pigment facing the camera,
-  with its own size, rotation and amount of paint. It is shaded with warm light and cool
-  blue-violet shadows, and highlights are left almost as bare paper. A full-screen pass then
+  with its own size, rotation and amount of paint, painted on white paper. A full-screen pass then
   makes it look painted: edges wobble like a hand-drawn line, neighboring colors bleed into
   each other, pigment pools darker where washes meet, washes are uneven, and pigment settles
-  into cold-press paper grain. It uses fewer resources than the mesh modes: 12 bytes per
+  into cold-press paper grain. It uses fewer resources than the mesh modes: 16 bytes per
   surface voxel.
 - Chunks outside the view are skipped (frustum culling). Glass, water and ice are drawn in a
   separate alpha-blended pass, sorted back to front.
@@ -138,6 +144,8 @@ voxel-viewer [options] [file...]
   --painted              start in painted mode (P cycles painted / watercolor / off)
   --watercolor           start in watercolor-on-paper mode
   --no-ao                disable ambient occlusion
+  --no-shadows           disable sun shadows
+  --dark                 dark studio background instead of the sky
   --msaa N               multisample count (default 8, 0 to disable)
   --no-prime             do not request the NVIDIA GPU on hybrid-graphics laptops
 ```
@@ -161,7 +169,8 @@ To open files, pass them on the command line, **drag and drop** them onto the wi
 | `P` | Cycle painting modes: painted → watercolor on paper → off |
 | `K` | Cycle smoothness (0, 2, 4, 8, 16 relaxation passes) |
 | `V` | Show/hide small decorations (torches, flowers, rails, signs, ...) |
-| `G` / `B` / `X` / `O` / `L` | Grid / bounding box / wireframe / ambient occlusion / light background |
+| `G` / `B` / `X` / `O` | Grid / bounding box / wireframe / ambient occlusion |
+| `J` / `L` | Sun shadows on/off / sky or dark studio background |
 | `F12` | Save a PNG screenshot to the current directory |
 | `H` | Print help · `Esc` quits |
 

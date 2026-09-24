@@ -17,8 +17,9 @@ struct RenderSettings {
     bool bounds = false;
     float aoStrength = 1.0f;
     float clipY = 1e9f;  // world Y above which fragments are discarded
-    bool darkBackground = true;
-    int paintStyle = 0;  // splat modes: 0 = painted (sun, shadows, sky), 1 = watercolor on paper
+    bool darkBackground = false;  // dark studio backdrop instead of the sky
+    bool shadows = true;
+    int paintStyle = 0;  // splat modes: 0 = painted brush dabs, 1 = watercolor on paper
 };
 
 class Renderer {
@@ -41,10 +42,26 @@ private:
         GLuint vao = 0, vbo = 0, ebo = 0;  // ebo is only owned by smooth meshes
         GLsizei indexCount = 0;  // splat meshes: instance count
     };
+    // Uniforms of the shared lighting code (kLightingGlsl) in one program.
+    struct LightLocs {
+        GLint lightDir = -1, lightVP = -1, shadowMap = -1, shadowTexel = -1, shadowsOn = -1, eye = -1, fogDist = -1,
+              horizon = -1, ao = -1;
+        void init(GLuint prog);
+    };
     struct VoxelProgram {
         GLuint id = 0;
-        GLint viewProj = -1, origin = -1, lightDir = -1, ao = -1, clipY = -1, eye = -1, fog = -1, fogColor = -1;
+        GLint viewProj = -1, origin = -1, clipY = -1;
+        LightLocs light;
         bool init(const char* vs, const char* fs);
+    };
+    struct ShadowMeshProgram {
+        GLuint id = 0;
+        GLint viewProj = -1, origin = -1, clipY = -1;
+        bool init(const char* vs, const char* fs);
+    };
+    // Per-frame lighting environment shared by every mode.
+    struct Environment {
+        Vec3 skyTop, skyBottom, horizonLinear;
     };
     struct GpuChunk {
         Vec3 origin;
@@ -55,7 +72,10 @@ private:
     GpuMesh makeMesh(const std::vector<PackedVertex>& verts);
     GpuMesh makeMesh(const SmoothMesh& mesh);
     GpuMesh makeMesh(const std::vector<Splat>& splats);
-    void renderWatercolor(const Camera& cam, int width, int height, const RenderSettings& s);
+    void renderWatercolor(const Camera& cam, int width, int height, const RenderSettings& s, const Environment& env);
+    Environment environment(const RenderSettings& s) const;
+    void applyLighting(const LightLocs& l, const Camera& cam, const RenderSettings& s, const Environment& env);
+    void drawSky(const Environment& env);
     bool ensureFbo(int width, int height);
     void renderShadowMap(float clipY);
     void beginUpload(IVec3 boundsMin, IVec3 boundsMax);
@@ -66,15 +86,17 @@ private:
 
     // Watercolor pipeline
     GLuint splatProg_ = 0, paintProg_ = 0;
-    GLint uSplatView_ = -1, uSplatProj_ = -1, uSplatOrigin_ = -1, uSplatClipY_ = -1, uSplatLight_ = -1, uSplatSize_ = -1;
+    GLint uSplatView_ = -1, uSplatProj_ = -1, uSplatOrigin_ = -1, uSplatClipY_ = -1, uSplatSize_ = -1;
+    LightLocs splatLight_;
+    ShadowMeshProgram shadowBlocky_, shadowSmooth_;
     GLint uPaintColor_ = -1, uPaintDepth_ = -1, uPaintTexel_ = -1;
     GLuint fbo_ = 0, fboColor_ = 0, fboDepth_ = 0;
     int fboW_ = 0, fboH_ = 0;
 
     // Painted style: sun shadow map, lit brush dabs, Kuwahara post-process.
     struct PaintedLocs {
-        GLint view = -1, proj = -1, origin = -1, clipY = -1, lightDir = -1, size = -1, lightVP = -1, shadowMap = -1,
-              shadowTexel = -1, eye = -1, fogDist = -1, horizon = -1;
+        GLint view = -1, proj = -1, origin = -1, clipY = -1, size = -1;
+        LightLocs light;
     } pl_;
     GLuint paintedProg_ = 0, kuwaharaProg_ = 0, shadowProg_ = 0;
     GLint uKuwColor_ = -1, uKuwTexel_ = -1;

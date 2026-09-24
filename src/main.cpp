@@ -43,7 +43,8 @@ const char* kHelp = R"(voxel-viewer controls
   K         cycle smoothness (relaxation passes: 0, 2, 4, 8, 16)
   P         cycle painting modes: off -> painted -> watercolor on paper -> off
   V         toggle small decorations (torches, flowers, rails...)
-  L         toggle light/dark background
+  J         toggle sun shadows
+  L         toggle sky / dark studio background
   ] / [     next / previous file in the folder
   Ctrl+O    open file dialog (zenity/kdialog)   or drag & drop files onto the window
   F12       save screenshot (PNG)
@@ -172,6 +173,8 @@ bool App::parseArgs(int argc, char** argv) {
                         "  --painted              start in painted mode: brush dabs, sun, shadows, sky (P cycles)\n"
                         "  --watercolor           start in watercolor-on-paper mode (P cycles)\n"
                         "  --no-ao                disable ambient occlusion\n"
+                        "  --no-shadows           disable sun shadows\n"
+                        "  --dark                 dark studio background instead of the sky\n"
                         "  --msaa N               multisample count (default 8, 0 to disable)\n"
                         "  --no-prime             do not request the NVIDIA GPU on hybrid-graphics laptops\n\n%s",
                         kHelp);
@@ -198,6 +201,10 @@ bool App::parseArgs(int argc, char** argv) {
             settings_.paintStyle = 1;
         } else if (a == "--smooth-iterations") {
             meshOpts_.smoothIterations = std::clamp(std::atoi(next().c_str()), 0, kMaxSmoothIterations);
+        } else if (a == "--no-shadows") {
+            settings_.shadows = false;
+        } else if (a == "--dark") {
+            settings_.darkBackground = true;
         } else if (a == "--no-ao") {
             settings_.aoStrength = 0;
         } else if (a == "--msaa") {
@@ -378,6 +385,7 @@ void App::onKey(int key, int mods) {
             }
             break;
         case GLFW_KEY_L: settings_.darkBackground = !settings_.darkBackground; break;
+        case GLFW_KEY_J: settings_.shadows = !settings_.shadows; break;
         case GLFW_KEY_P:
             if (!meshOpts_.watercolor) {
                 meshOpts_.watercolor = true;
