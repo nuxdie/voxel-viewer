@@ -32,6 +32,11 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+      - name: Build OpenGL ES variant (the Android rendering path)
+        run: |
+          cmake -S . -B build-gles -DCMAKE_BUILD_TYPE=Release -DVV_BUNDLE_GLFW=ON -DVV_GLES=ON
+          cmake --build build-gles -j --target voxel-viewer
+
       - name: Package
         run: |
           dir=voxel-viewer-linux-x86_64
@@ -46,6 +51,44 @@ jobs:
           name: voxel-viewer-linux-x86_64
           path: voxel-viewer-linux-x86_64.tar.gz
 
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Build APK
+        run: |
+          gradle -p android assembleRelease --no-daemon \
+            -PversionCode=${{ github.run_number }} -PversionName=1.0.${{ github.run_number }}
+          cp android/app/build/outputs/apk/release/app-release.apk voxel-viewer-android.apk
+          ls -la voxel-viewer-android.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voxel-viewer-android
+          path: voxel-viewer-android.apk
+
+  release:
+    needs: [linux, android]
+    if: github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
       # Every push to master refreshes the rolling "latest" release.
       - name: Publish "latest" release
         if: github.ref == 'refs/heads/master'
@@ -55,13 +98,15 @@ jobs:
           git tag -f latest
           git push -f origin latest
           gh release delete latest --yes || true
-          gh release create latest voxel-viewer-linux-x86_64.tar.gz \
+          gh release create latest dist/voxel-viewer-linux-x86_64.tar.gz dist/voxel-viewer-android.apk \
             --title "Latest build (master)" --prerelease \
-            --notes "Automatic build of master at ${GITHUB_SHA}. Download, extract and run ./voxel-viewer <file>."
+            --notes "Automatic build of master at ${GITHUB_SHA}. Linux: download, extract and run ./voxel-viewer <file>. Android: install voxel-viewer-android.apk (allow installing from unknown sources)."
 
       # Pushing a tag like v1.0 creates a versioned release.
       - name: Publish tagged release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" voxel-viewer-linux-x86_64.tar.gz --title "${GITHUB_REF_NAME}" --generate-notes
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/voxel-viewer-linux-x86_64.tar.gz dist/voxel-viewer-android.apk \
+            --title "${GITHUB_REF_NAME}" --generate-notes

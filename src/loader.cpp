@@ -22,7 +22,10 @@ bool hasSupportedExtension(const std::string& path) {
 }
 
 std::unique_ptr<VoxelModel> loadModelFile(const std::string& path) {
-    std::vector<uint8_t> data = readFile(path);
+    return loadModelData(readFile(path));
+}
+
+std::unique_ptr<VoxelModel> loadModelData(const std::vector<uint8_t>& data) {
     if (data.size() >= 4 && std::equal(data.begin(), data.begin() + 4, "VOX ")) return loadVox(data);
     nbt::Tag root = nbt::parse(data);
     return loadMinecraftNbt(root);

@@ -12,6 +12,8 @@ namespace vox {
 
 // Loads any supported file, detecting the format from its content. Throws std::runtime_error.
 std::unique_ptr<VoxelModel> loadModelFile(const std::string& path);
+// Same, from file contents already in memory (used on Android, where files arrive as streams).
+std::unique_ptr<VoxelModel> loadModelData(const std::vector<uint8_t>& data);
 
 // MagicaVoxel .vox
 std::unique_ptr<VoxelModel> loadVox(const std::vector<uint8_t>& data);

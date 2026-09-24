@@ -1,5 +1,21 @@
-// Tiny OpenGL 3.3 core function loader (avoids a GLEW/glad dependency).
+// OpenGL access for all platforms.
+//
+// Desktop: a tiny OpenGL 3.3 core function loader (avoids a GLEW/glad dependency). Building with
+// VV_GLES requests OpenGL ES 3.0 instead, which is how the Android renderer is tested on desktop.
+// Android: functions come straight from libGLESv3.
 #pragma once
+
+#if defined(__ANDROID__)
+
+#include <GLES3/gl3.h>
+#ifndef VV_GLES
+#define VV_GLES 1
+#endif
+namespace gl {
+inline bool load(void* (*)(const char*)) { return true; }
+}  // namespace gl
+
+#else
 
 #include <GL/glcorearb.h>
 
@@ -14,11 +30,10 @@
     X(PFNGLDEPTHMASKPROC, glDepthMask)                                             \
     X(PFNGLDEPTHFUNCPROC, glDepthFunc)                                             \
     X(PFNGLCULLFACEPROC, glCullFace)                                               \
-    X(PFNGLPOLYGONMODEPROC, glPolygonMode)                                         \
     X(PFNGLPOLYGONOFFSETPROC, glPolygonOffset)                                     \
     X(PFNGLREADPIXELSPROC, glReadPixels)                                           \
     X(PFNGLREADBUFFERPROC, glReadBuffer)                                           \
-    X(PFNGLDRAWBUFFERPROC, glDrawBuffer)                                           \
+    X(PFNGLDRAWBUFFERSPROC, glDrawBuffers)                                         \
     X(PFNGLPIXELSTOREIPROC, glPixelStorei)                                         \
     X(PFNGLGETSTRINGPROC, glGetString)                                             \
     X(PFNGLGETERRORPROC, glGetError)                                               \
@@ -70,12 +85,22 @@
     X(PFNGLVERTEXATTRIBIPOINTERPROC, glVertexAttribIPointer)                       \
     X(PFNGLENABLEVERTEXATTRIBARRAYPROC, glEnableVertexAttribArray)
 
+// Functions that do not exist in OpenGL ES.
+#ifdef VV_GLES
+#define VV_GL_DESKTOP_FUNCTIONS(X)
+#else
+#define VV_GL_DESKTOP_FUNCTIONS(X) X(PFNGLPOLYGONMODEPROC, glPolygonMode)
+#endif
+
 #define VV_DECLARE(type, name) extern type name;
 namespace gl {
 VV_GL_FUNCTIONS(VV_DECLARE)
+VV_GL_DESKTOP_FUNCTIONS(VV_DECLARE)
 // Loads all functions via the given GetProcAddress; returns false if any are missing.
 bool load(void* (*getProc)(const char*));
 }  // namespace gl
 #undef VV_DECLARE
 
 using namespace gl;
+
+#endif  // __ANDROID__

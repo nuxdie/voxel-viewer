@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
+#include <string>
 
 namespace vox {
 namespace {
@@ -423,6 +424,15 @@ void main() {
 )";
 
 GLuint compile(GLenum type, const char* src) {
+#ifdef VV_GLES
+    // Shaders are written as GLSL 3.30; OpenGL ES 3.0 needs its own header and precisions.
+    std::string es = src;
+    const std::string desktop = "#version 330 core\n";
+    if (es.compare(0, desktop.size(), desktop) == 0)
+        es = "#version 300 es\nprecision highp float;\nprecision highp int;\nprecision highp sampler2D;\n" +
+             es.substr(desktop.size());
+    src = es.c_str();
+#endif
     GLuint s = glCreateShader(type);
     glShaderSource(s, 1, &src, nullptr);
     glCompileShader(s);
@@ -758,8 +768,10 @@ bool Renderer::ensureFbo(int w, int h) {
         glBindTexture(GL_TEXTURE_2D, t);
         if (t == fboDepth_)
             glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, w, h, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        // Depth textures are not filterable in OpenGL ES.
+        GLint filter = t == fboDepth_ ? GL_NEAREST : GL_LINEAR;
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     }
@@ -790,7 +802,8 @@ void Renderer::renderShadowMap(float clipY) {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glBindFramebuffer(GL_FRAMEBUFFER, shadowFbo_);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, shadowTex_, 0);
-        glDrawBuffer(GL_NONE);
+        GLenum none = GL_NONE;
+        glDrawBuffers(1, &none);
         glReadBuffer(GL_NONE);
         if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
             std::fprintf(stderr, "painted: shadow framebuffer incomplete\n");
@@ -975,7 +988,9 @@ void Renderer::render(const Camera& cam, int width, int height, const RenderSett
     // Relaxed smooth meshes can contain a few folded triangles, so draw them two-sided.
     if (mode_ == Mode::Blocky) glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
+#ifndef VV_GLES
     if (s.wireframe) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+#endif
 
     // Opaque pass
     std::vector<std::pair<float, const GpuChunk*>> transparent;
@@ -1011,7 +1026,9 @@ void Renderer::render(const Camera& cam, int width, int height, const RenderSett
         glDepthMask(GL_TRUE);
         glDisable(GL_BLEND);
     }
+#ifndef VV_GLES
     if (s.wireframe) glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+#endif
     glDisable(GL_CULL_FACE);
 
     // Grid and bounds

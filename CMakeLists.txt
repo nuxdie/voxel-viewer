@@ -54,6 +54,10 @@ add_executable(voxel-viewer
   src/renderer.cpp
   src/camera.cpp
 )
+option(VV_GLES "Render with OpenGL ES 3.0 (tests the Android code path on desktop)" OFF)
+if(VV_GLES)
+  target_compile_definitions(voxel-viewer PRIVATE VV_GLES=1)
+endif()
 target_compile_options(voxel-viewer PRIVATE -Wall -Wextra)
 if(TARGET glfw)
   target_link_libraries(voxel-viewer PRIVATE voxcore glfw OpenGL::GL ${CMAKE_DL_LIBS})

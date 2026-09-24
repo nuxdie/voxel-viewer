@@ -2,3 +2,8 @@ build/
 *.png
 !docs/*.png
 __pycache__/
+android/.gradle/
+android/build/
+android/app/build/
+android/app/.cxx/
+android/local.properties

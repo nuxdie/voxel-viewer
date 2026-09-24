@@ -335,12 +335,14 @@ void App::updateTitle() {
 void App::saveScreenshot(const std::string& path) {
     int w, h;
     glfwGetFramebufferSize(win_, &w, &h);
-    std::vector<uint8_t> px(size_t(w) * size_t(h) * 3), flipped(px.size());
+    // RGBA is the only readback format OpenGL ES guarantees.
+    std::vector<uint8_t> px(size_t(w) * size_t(h) * 4), flipped(size_t(w) * size_t(h) * 3);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glReadBuffer(GL_BACK);
-    glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, px.data());
+    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
     for (int y = 0; y < h; ++y)
-        std::memcpy(&flipped[size_t(y) * size_t(w) * 3], &px[size_t(h - 1 - y) * size_t(w) * 3], size_t(w) * 3);
+        for (int x = 0; x < w; ++x)
+            std::memcpy(&flipped[(size_t(y) * size_t(w) + size_t(x)) * 3], &px[(size_t(h - 1 - y) * size_t(w) + size_t(x)) * 4], 3);
     if (writePng(path, w, h, flipped.data())) std::printf("saved %s (%dx%d)\n", path.c_str(), w, h);
     else std::fprintf(stderr, "failed to write %s\n", path.c_str());
 }
@@ -457,10 +459,16 @@ int App::run(int argc, char** argv) {
     bool headless = !screenshotPath_.empty();
     auto createWindow = [&](int samples) {
         glfwDefaultWindowHints();
+#ifdef VV_GLES
+        glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_ES_API);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+#else
         glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
         glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
         glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
+#endif
         glfwWindowHint(GLFW_SAMPLES, samples);
         if (headless) glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
         return glfwCreateWindow(width_, height_, "voxel-viewer", nullptr, nullptr);
@@ -504,7 +512,9 @@ int App::run(int argc, char** argv) {
     }
     std::printf("OpenGL %s on %s (%s)\n", reinterpret_cast<const char*>(glGetString(GL_VERSION)),
                 reinterpret_cast<const char*>(glGetString(GL_RENDERER)), reinterpret_cast<const char*>(glGetString(GL_VENDOR)));
+#ifndef VV_GLES
     if (msaa_ > 0) glEnable(GL_MULTISAMPLE);
+#endif
     if (!renderer_.init()) return 1;
 
     glfwSetWindowUserPointer(win_, this);
