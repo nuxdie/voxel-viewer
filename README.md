@@ -1,7 +1,7 @@
 # voxel-viewer
 
-A fast OpenGL voxel viewer for Linux, written in C++17. It opens **MagicaVoxel** models and
-**Minecraft WorldEdit** schematics.
+A fast OpenGL voxel viewer for Linux and Android, written in C++17. It opens **MagicaVoxel**
+models and **Minecraft WorldEdit** schematics.
 
 ![screenshot](docs/screenshot.png)
 ![smooth mesher](docs/screenshot-smooth.png)
@@ -67,6 +67,27 @@ driver (NVIDIA, Mesa, ...) and glibc 2.35 or newer.
 curl -L https://github.com/nuxdie/voxel-viewer/releases/download/latest/voxel-viewer-linux-x86_64.tar.gz | tar xz
 ./voxel-viewer-linux-x86_64/voxel-viewer model.vox
 ```
+
+### Android
+
+`voxel-viewer-android.apk` is on the same [Releases page](https://github.com/nuxdie/voxel-viewer/releases/tag/latest).
+Open it on the phone and allow installing from unknown sources. It needs Android 7.0 or newer
+and OpenGL ES 3.0, which practically every phone since 2014 has. Builds are signed with the
+same key every time, so a newer APK installs over the old one.
+
+- **Open** opens the file picker, or loads one of the bundled samples (a forest and a house).
+  You can also open `.vox`/`.schem` files from a file manager with "Open with → Voxel Viewer".
+- **Mode** cycles Blocks → Smooth → Painted → Watercolor.
+- **Slice − / Slice + / All** control the cut-away slice. **Decor** hides small blocks.
+  **Reset** re-frames the model.
+- Drag with one finger to orbit. Pinch to zoom, drag with two fingers to pan, and double
+  tap to reset the view.
+
+The app is in `android/`. It is a plain Gradle project with no library dependencies: a small
+Java activity plus a JNI bridge (`android/app/src/main/cpp/jni_bridge.cpp`) to the same C++
+engine. Build it with Android Studio, or run `gradle -p android assembleRelease` with the
+Android SDK and NDK installed. The renderer uses OpenGL ES 3.0 there. You can run the same
+path on desktop with `cmake -DVV_GLES=ON`, which is how it is tested without a phone.
 
 ## Building
 
@@ -161,7 +182,8 @@ src/block_colors.*       Minecraft block colors + legacy numeric ID table
 src/mesher.*             multithreaded greedy mesher with ambient occlusion
 src/smooth_mesher.*      multithreaded smooth mesher (constrained surface nets)
 src/splats.*             surface voxel splats for the painted and watercolor modes
-src/renderer.*           OpenGL 3.3 renderer
+src/renderer.*           OpenGL 3.3 / OpenGL ES 3.0 renderer
 src/main.cpp             window, input, file handling (GLFW)
+android/                 Android app (Java UI + JNI bridge to the same engine)
 tests/make_samples.py    writes the same build in every format; check_samples.py cross-checks the loaders
 ```

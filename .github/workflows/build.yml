@@ -72,6 +72,22 @@ jobs:
           cp android/app/build/outputs/apk/release/app-release.apk voxel-viewer-android.apk
           ls -la voxel-viewer-android.apk
 
+      - name: Verify APK contents
+        run: |
+          set -e
+          unzip -l voxel-viewer-android.apk | grep -E "lib/|assets/"
+          nm=$(ls -d $ANDROID_HOME/ndk/*/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm | tail -1)
+          # Every native method declared in Java must be exported by every ABI, or the app crashes on use.
+          methods=$(grep -oE 'static native [^ ]+ [a-zA-Z]+' android/app/src/main/java/com/nuxdie/voxelviewer/NativeLib.java | awk '{print $4}')
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            unzip -p voxel-viewer-android.apk lib/$abi/libvoxelviewer.so > lib.so
+            for m in $methods; do
+              $nm -D --defined-only lib.so | grep -q "Java_com_nuxdie_voxelviewer_NativeLib_$m\$" || { echo "missing $m in $abi"; exit 1; }
+            done
+            echo "$abi: all $(echo $methods | wc -w) JNI methods exported"
+          done
+          unzip -l voxel-viewer-android.apk | grep -q assets/forest.schem
+
       - uses: actions/upload-artifact@v4
         with:
           name: voxel-viewer-android
