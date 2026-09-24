@@ -41,6 +41,7 @@ add_library(voxcore STATIC
   src/loader.cpp
   src/mesher.cpp
   src/smooth_mesher.cpp
+  src/splats.cpp
   src/image_writer.cpp
 )
 target_include_directories(voxcore PUBLIC src)

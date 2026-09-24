@@ -7,6 +7,7 @@
 #include "gl_loader.h"
 #include "mesher.h"
 #include "smooth_mesher.h"
+#include "splats.h"
 
 namespace vox {
 
@@ -26,6 +27,8 @@ public:
     // Replaces the GPU meshes. boundsMin/Max are inclusive voxel bounds.
     void upload(const std::vector<ChunkMesh>& meshes, IVec3 boundsMin, IVec3 boundsMax);
     void upload(const std::vector<SmoothChunkMesh>& meshes, IVec3 boundsMin, IVec3 boundsMax);
+    // Watercolor mode: soft pigment splats + a painterly post-process.
+    void upload(const std::vector<SplatChunk>& splats, IVec3 boundsMin, IVec3 boundsMax);
     void render(const Camera& cam, int width, int height, const RenderSettings& s);
 
     size_t drawnTriangles() const { return drawnTriangles_; }
@@ -35,7 +38,7 @@ public:
 private:
     struct GpuMesh {
         GLuint vao = 0, vbo = 0, ebo = 0;  // ebo is only owned by smooth meshes
-        GLsizei indexCount = 0;
+        GLsizei indexCount = 0;  // splat meshes: instance count
     };
     struct VoxelProgram {
         GLuint id = 0;
@@ -50,11 +53,21 @@ private:
     void freeChunks();
     GpuMesh makeMesh(const std::vector<PackedVertex>& verts);
     GpuMesh makeMesh(const SmoothMesh& mesh);
+    GpuMesh makeMesh(const std::vector<Splat>& splats);
+    void renderWatercolor(const Camera& cam, int width, int height, const RenderSettings& s);
+    bool ensureFbo(int width, int height);
     void beginUpload(IVec3 boundsMin, IVec3 boundsMax);
     void buildGrid();
 
     VoxelProgram blockyProg_, smoothProg_;
-    bool smooth_ = false;
+    enum class Mode { Blocky, Smooth, Watercolor } mode_ = Mode::Blocky;
+
+    // Watercolor pipeline
+    GLuint splatProg_ = 0, paintProg_ = 0;
+    GLint uSplatView_ = -1, uSplatProj_ = -1, uSplatOrigin_ = -1, uSplatClipY_ = -1, uSplatLight_ = -1, uSplatSize_ = -1;
+    GLint uPaintColor_ = -1, uPaintDepth_ = -1, uPaintTexel_ = -1;
+    GLuint fbo_ = 0, fboColor_ = 0, fboDepth_ = 0;
+    int fboW_ = 0, fboH_ = 0;
     GLuint lineProg_ = 0, bgProg_ = 0;
     GLuint ebo_ = 0;
     size_t eboQuads_ = 0;

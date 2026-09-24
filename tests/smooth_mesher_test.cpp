@@ -5,6 +5,7 @@
 #include <tuple>
 
 #include "smooth_mesher.h"
+#include "splats.h"
 
 using namespace vox;
 
@@ -61,6 +62,26 @@ int main() {
         failures += checkClosed(sphere, it, "sphere across chunks");
         failures += checkClosed(thin, it, "pillar + wall with hole");
     }
-    std::printf(failures ? "FAILED\n" : "all smooth mesh checks passed\n");
+    // Watercolor splats: one per surface voxel of a cube spanning chunks, normals pointing out.
+    VoxelModel cube;
+    cube.materials.push_back(Material{{90, 140, 200, 255}, 0, "c"});
+    for (int z = 28; z < 38; ++z)
+        for (int y = -5; y < 5; ++y)
+            for (int x = 28; x < 38; ++x) cube.set(x, y, z, 1);
+    size_t splats = 0, inward = 0;
+    for (const auto& sc : buildSplats(cube, {})) {
+        for (const Splat& sp : sc.splats) {
+            ++splats;
+            float px = float(sc.chunk.x * kChunkSize + sp.x) + 0.5f - 33.0f;
+            float py = float(sc.chunk.y * kChunkSize + sp.y) + 0.5f - 0.0f;
+            float pz = float(sc.chunk.z * kChunkSize + sp.z) + 0.5f - 33.0f;
+            if (px * sp.nx + py * sp.ny + pz * sp.nz <= 0) ++inward;
+        }
+    }
+    bool splatsOk = splats == 10 * 10 * 10 - 8 * 8 * 8 && inward == 0;
+    std::printf("%-28s splats=%zu (expected 488) inward normals=%zu\n", "cube splats", splats, inward);
+    failures += splatsOk ? 0 : 1;
+
+    std::printf(failures ? "FAILED\n" : "all smooth mesh and splat checks passed\n");
     return failures ? 1 : 0;
 }

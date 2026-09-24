@@ -24,6 +24,20 @@
     X(PFNGLFINISHPROC, glFinish)                                                   \
     X(PFNGLDRAWARRAYSPROC, glDrawArrays)                                           \
     X(PFNGLDRAWELEMENTSPROC, glDrawElements)                                       \
+    X(PFNGLDRAWARRAYSINSTANCEDPROC, glDrawArraysInstanced)                         \
+    X(PFNGLVERTEXATTRIBDIVISORPROC, glVertexAttribDivisor)                         \
+    X(PFNGLGENFRAMEBUFFERSPROC, glGenFramebuffers)                                 \
+    X(PFNGLDELETEFRAMEBUFFERSPROC, glDeleteFramebuffers)                           \
+    X(PFNGLBINDFRAMEBUFFERPROC, glBindFramebuffer)                                 \
+    X(PFNGLFRAMEBUFFERTEXTURE2DPROC, glFramebufferTexture2D)                       \
+    X(PFNGLCHECKFRAMEBUFFERSTATUSPROC, glCheckFramebufferStatus)                   \
+    X(PFNGLGENTEXTURESPROC, glGenTextures)                                         \
+    X(PFNGLDELETETEXTURESPROC, glDeleteTextures)                                   \
+    X(PFNGLBINDTEXTUREPROC, glBindTexture)                                         \
+    X(PFNGLTEXIMAGE2DPROC, glTexImage2D)                                           \
+    X(PFNGLTEXPARAMETERIPROC, glTexParameteri)                                     \
+    X(PFNGLACTIVETEXTUREPROC, glActiveTexture)                                     \
+    X(PFNGLUNIFORM2FPROC, glUniform2f)                                             \
     X(PFNGLCREATESHADERPROC, glCreateShader)                                       \
     X(PFNGLSHADERSOURCEPROC, glShaderSource)                                       \
     X(PFNGLCOMPILESHADERPROC, glCompileShader)                                     \

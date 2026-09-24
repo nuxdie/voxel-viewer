@@ -27,6 +27,7 @@ struct MeshOptions {
     bool greedy = true;
     bool smooth = false;         // use the smooth (surface nets) mesher instead of cubes
     int smoothIterations = 8;    // relaxation passes for the smooth mesher
+    bool watercolor = false;     // render as painted pigment blobs instead of a mesh
 };
 
 // Builds a mesh for every non-empty chunk, using all hardware threads.

@@ -23,6 +23,7 @@
 #include "mesher.h"
 #include "renderer.h"
 #include "smooth_mesher.h"
+#include "splats.h"
 
 namespace fs = std::filesystem;
 using namespace vox;
@@ -40,6 +41,7 @@ const char* kHelp = R"(voxel-viewer controls
   X         toggle wireframe       O   toggle ambient occlusion
   M         toggle smooth mesh (surface nets) / blocky cubes
   K         cycle smoothness (relaxation passes: 0, 2, 4, 8, 16)
+  P         toggle watercolor painting mode
   V         toggle small decorations (torches, flowers, rails...)
   L         toggle light/dark background
   ] / [     next / previous file in the folder
@@ -52,7 +54,8 @@ struct Loaded {
     std::unique_ptr<VoxelModel> model;
     std::vector<ChunkMesh> meshes;
     std::vector<SmoothChunkMesh> smoothMeshes;
-    bool smooth = false;
+    std::vector<SplatChunk> splats;
+    bool smooth = false, watercolor = false;
     std::string path, error;
     double loadMs = 0, meshMs = 0;
 };
@@ -65,7 +68,9 @@ Loaded loadAndMesh(const std::string& path, MeshOptions opts) {
         r.model = loadModelFile(path);
         auto t1 = std::chrono::steady_clock::now();
         r.smooth = opts.smooth;
-        if (opts.smooth) r.smoothMeshes = buildSmoothMeshes(*r.model, opts, opts.smoothIterations);
+        r.watercolor = opts.watercolor;
+        if (opts.watercolor) r.splats = buildSplats(*r.model, opts);
+        else if (opts.smooth) r.smoothMeshes = buildSmoothMeshes(*r.model, opts, opts.smoothIterations);
         else r.meshes = buildMeshes(*r.model, opts);
         auto t2 = std::chrono::steady_clock::now();
         r.loadMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
@@ -161,6 +166,7 @@ bool App::parseArgs(int argc, char** argv) {
                         "  --hide-decorations     hide torches, flowers, rails and other small blocks\n"
                         "  --smooth               start with the smooth mesher (toggle with M)\n"
                         "  --smooth-iterations N  smoothing passes, 0-16 (default 8)\n"
+                        "  --watercolor           start in watercolor painting mode (toggle with P)\n"
                         "  --no-ao                disable ambient occlusion\n"
                         "  --msaa N               multisample count (default 8, 0 to disable)\n"
                         "  --no-prime             do not request the NVIDIA GPU on hybrid-graphics laptops\n\n%s",
@@ -176,6 +182,8 @@ bool App::parseArgs(int argc, char** argv) {
             meshOpts_.hideDecorations = true;
         } else if (a == "--smooth") {
             meshOpts_.smooth = true;
+        } else if (a == "--watercolor") {
+            meshOpts_.watercolor = true;
         } else if (a == "--smooth-iterations") {
             meshOpts_.smoothIterations = std::clamp(std::atoi(next().c_str()), 0, kMaxSmoothIterations);
         } else if (a == "--no-ao") {
@@ -245,7 +253,8 @@ void App::applyLoaded(Loaded&& l) {
     currentPath_ = l.path;
     IVec3 mn = model_->boundsMin(), mx = model_->boundsMax();
     if (model_->empty()) mn = mx = {0, 0, 0};
-    if (l.smooth) renderer_.upload(l.smoothMeshes, mn, mx);
+    if (l.watercolor) renderer_.upload(l.splats, mn, mx);
+    else if (l.smooth) renderer_.upload(l.smoothMeshes, mn, mx);
     else renderer_.upload(l.meshes, mn, mx);
     if (!sameFile) {
         camera_.frame(Vec3(float(mn.x), float(mn.y), float(mn.z)), Vec3(float(mx.x + 1), float(mx.y + 1), float(mx.z + 1)));
@@ -263,7 +272,9 @@ void App::applyLoaded(Loaded&& l) {
 void App::remesh() {
     if (!model_ || pending_.valid()) return;
     auto t0 = std::chrono::steady_clock::now();
-    if (meshOpts_.smooth)
+    if (meshOpts_.watercolor)
+        renderer_.upload(buildSplats(*model_, meshOpts_), model_->boundsMin(), model_->boundsMax());
+    else if (meshOpts_.smooth)
         renderer_.upload(buildSmoothMeshes(*model_, meshOpts_, meshOpts_.smoothIterations), model_->boundsMin(), model_->boundsMax());
     else
         renderer_.upload(buildMeshes(*model_, meshOpts_), model_->boundsMin(), model_->boundsMax());
@@ -293,7 +304,8 @@ void App::updateTitle() {
         t += " — " + std::to_string(s.x) + "×" + std::to_string(s.y) + "×" + std::to_string(s.z);
         t += " — " + formatCount(model_->voxelCount()) + " voxels";
         if (clipLayer_ != INT32_MAX) t += " — slice y≤" + std::to_string(clipLayer_);
-        if (meshOpts_.smooth) t += " — smooth (" + std::to_string(meshOpts_.smoothIterations) + ")";
+        if (meshOpts_.watercolor) t += " — watercolor";
+        else if (meshOpts_.smooth) t += " — smooth (" + std::to_string(meshOpts_.smoothIterations) + ")";
         if (meshOpts_.hideDecorations) t += " — decorations hidden";
         if (camera_.mode() == Camera::Mode::Fly) t += " — FLY";
         char buf[64];
@@ -350,8 +362,14 @@ void App::onKey(int key, int mods) {
             }
             break;
         case GLFW_KEY_L: settings_.darkBackground = !settings_.darkBackground; break;
+        case GLFW_KEY_P:
+            meshOpts_.watercolor = !meshOpts_.watercolor;
+            remesh();
+            updateTitle();
+            break;
         case GLFW_KEY_M:
-            meshOpts_.smooth = !meshOpts_.smooth;
+            if (meshOpts_.watercolor) meshOpts_.watercolor = false;  // M always returns to a mesh mode
+            else meshOpts_.smooth = !meshOpts_.smooth;
             remesh();
             updateTitle();
             break;
@@ -360,7 +378,7 @@ void App::onKey(int key, int mods) {
             int i = 0;
             while (i < 5 && levels[i] <= meshOpts_.smoothIterations) ++i;
             meshOpts_.smoothIterations = levels[i % 5];
-            if (meshOpts_.smooth) remesh();
+            if (meshOpts_.smooth && !meshOpts_.watercolor) remesh();
             updateTitle();
             break;
         }

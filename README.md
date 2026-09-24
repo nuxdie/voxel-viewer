@@ -5,6 +5,7 @@ A fast OpenGL voxel viewer for Linux, written in C++17. It opens **MagicaVoxel**
 
 ![screenshot](docs/screenshot.png)
 ![smooth mesher](docs/screenshot-smooth.png)
+![watercolor mode](docs/screenshot-watercolor.png)
 
 | Format | Extension | Notes |
 |---|---|---|
@@ -29,6 +30,14 @@ The viewer detects the format from the file's content, so the extension doesn't 
   margin away from the cell walls. `K` cycles the number of relaxation passes
   (0 = chamfered, 16 = smoothest). The mesh is watertight across chunk borders; a test checks
   this.
+- **Watercolor mode** (press `P`, or start with `--watercolor`) doesn't draw cubes at all.
+  Every visible surface voxel becomes a soft, irregular blob of pigment facing the camera,
+  with its own size, rotation and amount of paint. It is shaded with warm light and cool
+  blue-violet shadows, and highlights are left almost as bare paper. A full-screen pass then
+  makes it look painted: edges wobble like a hand-drawn line, neighboring colors bleed into
+  each other, pigment pools darker where washes meet, washes are uneven, and pigment settles
+  into cold-press paper grain. It uses fewer resources than the mesh modes: 12 bytes per
+  surface voxel.
 - Chunks outside the view are skipped (frustum culling). Glass, water and ice are drawn in a
   separate alpha-blended pass, sorted back to front.
 - Tested with a 768×76×768 Sponge schematic of 26.6 million voxels: it loads in about 0.75 s,
@@ -93,6 +102,7 @@ voxel-viewer [options] [file...]
   --hide-decorations     hide torches, flowers, rails and other small blocks
   --smooth               start with the smooth mesher (toggle with M)
   --smooth-iterations N  smoothing passes, 0-16 (default 8)
+  --watercolor           start in watercolor painting mode (toggle with P)
   --no-ao                disable ambient occlusion
   --msaa N               multisample count (default 8, 0 to disable)
   --no-prime             do not request the NVIDIA GPU on hybrid-graphics laptops
@@ -114,6 +124,7 @@ To open files, pass them on the command line, **drag and drop** them onto the wi
 | `PgUp` / `PgDn` (+`Shift` for ×10) | Move the cut-away slice, to see inside buildings layer by layer |
 | `Home` | Remove the slice |
 | `M` | Switch between blocky cubes and the smooth mesh |
+| `P` | Watercolor painting mode on/off |
 | `K` | Cycle smoothness (0, 2, 4, 8, 16 relaxation passes) |
 | `V` | Show/hide small decorations (torches, flowers, rails, signs, ...) |
 | `G` / `B` / `X` / `O` / `L` | Grid / bounding box / wireframe / ambient occlusion / light background |
@@ -136,6 +147,7 @@ src/schematic_loader.cpp .schematic / .schem / .litematic / structure .nbt
 src/block_colors.*       Minecraft block colors + legacy numeric ID table
 src/mesher.*             multithreaded greedy mesher with ambient occlusion
 src/smooth_mesher.*      multithreaded smooth mesher (constrained surface nets)
+src/splats.*             surface voxel splats for watercolor mode
 src/renderer.*           OpenGL 3.3 renderer
 src/main.cpp             window, input, file handling (GLFW)
 tests/make_samples.py    writes the same build in every format; check_samples.py cross-checks the loaders
