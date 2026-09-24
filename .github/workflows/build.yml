@@ -1,0 +1,67 @@
+name: build
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    # Oldest supported runner, so the binary runs on distros with glibc >= 2.35.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake zlib1g-dev libgl-dev \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
+            libwayland-dev libxkbcommon-dev wayland-protocols
+
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DVV_BUNDLE_GLFW=ON -DVV_STATIC_LIBSTDCXX=ON
+          cmake --build build -j
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Package
+        run: |
+          dir=voxel-viewer-linux-x86_64
+          mkdir $dir
+          cp build/voxel-viewer build/voxinfo README.md $dir/
+          strip $dir/voxel-viewer $dir/voxinfo
+          tar czf $dir.tar.gz $dir
+          ldd $dir/voxel-viewer
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voxel-viewer-linux-x86_64
+          path: voxel-viewer-linux-x86_64.tar.gz
+
+      # Every push to master refreshes the rolling "latest" release.
+      - name: Publish "latest" release
+        if: github.ref == 'refs/heads/master'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git tag -f latest
+          git push -f origin latest
+          gh release delete latest --yes || true
+          gh release create latest voxel-viewer-linux-x86_64.tar.gz \
+            --title "Latest build (master)" --prerelease \
+            --notes "Automatic build of master at ${GITHUB_SHA}. Download, extract and run ./voxel-viewer <file>."
+
+      # Pushing a tag like v1.0 creates a versioned release.
+      - name: Publish tagged release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" voxel-viewer-linux-x86_64.tar.gz --title "${GITHUB_REF_NAME}" --generate-notes

@@ -28,6 +28,17 @@ The viewer detects the format from the file's content, so the extension doesn't 
   about 400 blocks plus rules for dyed, wood, stone and copper variants. Unknown and modded
   blocks get a stable color derived from their name.
 
+## Download
+
+A prebuilt Linux x86_64 binary is on the [Releases page](https://github.com/nuxdie/voxel-viewer/releases/tag/latest).
+It is rebuilt on every push to `master`, and GLFW is linked in, so you only need a GPU
+driver (NVIDIA, Mesa, ...) and glibc 2.35 or newer.
+
+```sh
+curl -L https://github.com/nuxdie/voxel-viewer/releases/download/latest/voxel-viewer-linux-x86_64.tar.gz | tar xz
+./voxel-viewer-linux-x86_64/voxel-viewer model.vox
+```
+
 ## Building
 
 ```sh

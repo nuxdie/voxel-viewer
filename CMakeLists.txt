@@ -11,8 +11,24 @@ set(OpenGL_GL_PREFERENCE GLVND)
 find_package(OpenGL REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(Threads REQUIRED)
-find_package(glfw3 3.3 QUIET)
-if(NOT glfw3_FOUND)
+option(VV_BUNDLE_GLFW "Download and statically link GLFW (for portable release builds)" OFF)
+option(VV_STATIC_LIBSTDCXX "Statically link libstdc++/libgcc (for portable release builds)" OFF)
+
+if(VV_BUNDLE_GLFW)
+  include(FetchContent)
+  set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+  set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+  set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+  FetchContent_Declare(glfw
+    URL https://github.com/glfw/glfw/releases/download/3.4/glfw-3.4.zip
+    URL_HASH SHA256=b5ec004b2712fd08e8861dc271428f048775200a2df719ccf575143ba749a3e9)
+  FetchContent_MakeAvailable(glfw)
+else()
+  find_package(glfw3 3.3 QUIET)
+endif()
+if(NOT TARGET glfw)
   find_package(PkgConfig REQUIRED)
   pkg_check_modules(GLFW REQUIRED IMPORTED_TARGET glfw3)
 endif()
@@ -43,9 +59,16 @@ else()
   target_link_libraries(voxel-viewer PRIVATE voxcore PkgConfig::GLFW OpenGL::GL ${CMAKE_DL_LIBS})
 endif()
 
+if(VV_STATIC_LIBSTDCXX)
+  target_link_options(voxel-viewer PRIVATE -static-libstdc++ -static-libgcc)
+endif()
+
 # Headless tool: prints model statistics, useful for testing loaders.
 add_executable(voxinfo tools/voxinfo.cpp)
 target_link_libraries(voxinfo PRIVATE voxcore)
+if(VV_STATIC_LIBSTDCXX)
+  target_link_options(voxinfo PRIVATE -static-libstdc++ -static-libgcc)
+endif()
 
 install(TARGETS voxel-viewer voxinfo RUNTIME DESTINATION bin)
 
