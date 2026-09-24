@@ -10,6 +10,7 @@
     X(PFNGLDISABLEPROC, glDisable)                                                 \
     X(PFNGLVIEWPORTPROC, glViewport)                                               \
     X(PFNGLBLENDFUNCPROC, glBlendFunc)                                             \
+    X(PFNGLBLENDFUNCSEPARATEPROC, glBlendFuncSeparate)                             \
     X(PFNGLDEPTHMASKPROC, glDepthMask)                                             \
     X(PFNGLDEPTHFUNCPROC, glDepthFunc)                                             \
     X(PFNGLCULLFACEPROC, glCullFace)                                               \

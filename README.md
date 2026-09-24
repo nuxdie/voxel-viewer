@@ -66,11 +66,12 @@ At startup it prints which GPU it is rendering on:
 OpenGL 4.6.0 NVIDIA 570.xx on NVIDIA GeForce RTX 4070/PCIe/SSE2 (NVIDIA Corporation)
 ```
 
-On hybrid-graphics laptops (Intel/AMD iGPU + NVIDIA dGPU), the viewer sees the NVIDIA driver
-(`/proc/driver/nvidia/version`) and requests **PRIME render offload** itself by setting
-`__NV_PRIME_RENDER_OFFLOAD=1` and `__GLX_VENDOR_LIBRARY_NAME=nvidia`. If that context
-can't be created, it falls back to the default GPU. To keep it on the integrated GPU, pass
-`--no-prime`. You can also set the variables yourself, or run `prime-run voxel-viewer ...`.
+On a desktop where the NVIDIA card drives the display, the viewer just uses it. On
+hybrid-graphics laptops (Intel/AMD iGPU + NVIDIA dGPU), the NVIDIA driver may be loaded while
+the default context is on the integrated GPU. In that case the viewer restarts itself once with
+**PRIME render offload** (`__NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia`).
+To stay on the integrated GPU, pass `--no-prime`. You can also set the variables yourself, or
+run `prime-run voxel-viewer ...`.
 
 ## Usage
 

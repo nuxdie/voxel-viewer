@@ -11,6 +11,8 @@
 #include <string>
 #include <vector>
 
+#include <unistd.h>
+
 #include "gl_loader.h"  // must come before GLFW
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
@@ -372,13 +374,12 @@ void App::onKey(int key, int mods) {
 int App::run(int argc, char** argv) {
     if (!parseArgs(argc, argv)) return 1;
 
-    // Hybrid-graphics laptops: ask the NVIDIA driver to render (PRIME render offload).
+    // Hybrid-graphics laptops: if the NVIDIA driver is loaded but the default context is on
+    // another GPU, we re-exec ourselves with PRIME render offload enabled (see below).
+    // Offload is never requested when NVIDIA already drives the display: on desktops
+    // that can leave the window unpresented.
     bool nvidiaPresent = fs::exists("/proc/driver/nvidia/version");
-    if (usePrime_ && nvidiaPresent && !std::getenv("__GLX_VENDOR_LIBRARY_NAME")) {
-        setenv("__NV_PRIME_RENDER_OFFLOAD", "1", 0);
-        setenv("__GLX_VENDOR_LIBRARY_NAME", "nvidia", 0);
-        setenv("__VK_LAYER_NV_optimus", "NVIDIA_only", 0);
-    }
+    bool primeRetry = std::getenv("VV_PRIME_REEXEC") != nullptr;
 
     glfwSetErrorCallback([](int code, const char* msg) { std::fprintf(stderr, "GLFW error %d: %s\n", code, msg); });
     if (!glfwInit()) return 1;
@@ -395,14 +396,15 @@ int App::run(int argc, char** argv) {
     };
     win_ = createWindow(msaa_);
     if (!win_ && msaa_ > 0) win_ = createWindow(0);
-    if (!win_ && std::getenv("__NV_PRIME_RENDER_OFFLOAD") && usePrime_) {
-        // PRIME offload not configured: retry with the default GPU.
-        std::fprintf(stderr, "NVIDIA offload context failed, retrying with default GPU (use --no-prime to skip)\n");
+    if (!win_ && primeRetry) {
+        // PRIME offload not configured: fall back to the default GPU.
+        std::fprintf(stderr, "NVIDIA offload context failed, using the default GPU\n");
         glfwTerminate();
         unsetenv("__NV_PRIME_RENDER_OFFLOAD");
         unsetenv("__GLX_VENDOR_LIBRARY_NAME");
         if (!glfwInit()) return 1;
         win_ = createWindow(msaa_);
+        if (!win_ && msaa_ > 0) win_ = createWindow(0);
     }
     if (!win_) {
         std::fprintf(stderr, "Could not create an OpenGL 3.3 core window.\n");
@@ -412,6 +414,23 @@ int App::run(int argc, char** argv) {
     glfwMakeContextCurrent(win_);
     glfwSwapInterval(1);
     if (!gl::load([](const char* n) { return reinterpret_cast<void*>(glfwGetProcAddress(n)); })) return 1;
+    {
+        const char* vendor = reinterpret_cast<const char*>(glGetString(GL_VENDOR));
+        bool onNvidia = vendor && std::strstr(vendor, "NVIDIA");
+        if (!onNvidia && nvidiaPresent && usePrime_ && !primeRetry && !std::getenv("__GLX_VENDOR_LIBRARY_NAME")) {
+            std::printf("Rendering on %s; restarting on the NVIDIA GPU (PRIME offload, --no-prime to skip)\n",
+                        vendor ? vendor : "unknown GPU");
+            std::fflush(stdout);
+            glfwDestroyWindow(win_);
+            glfwTerminate();
+            setenv("VV_PRIME_REEXEC", "1", 1);
+            setenv("__NV_PRIME_RENDER_OFFLOAD", "1", 1);
+            setenv("__GLX_VENDOR_LIBRARY_NAME", "nvidia", 1);
+            execv("/proc/self/exe", argv);
+            std::perror("execv");
+            return 1;
+        }
+    }
     std::printf("OpenGL %s on %s (%s)\n", reinterpret_cast<const char*>(glGetString(GL_VERSION)),
                 reinterpret_cast<const char*>(glGetString(GL_RENDERER)), reinterpret_cast<const char*>(glGetString(GL_VENDOR)));
     if (msaa_ > 0) glEnable(GL_MULTISAMPLE);

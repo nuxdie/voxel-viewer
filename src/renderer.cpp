@@ -348,7 +348,7 @@ void Renderer::render(const Camera& cam, int width, int height, const RenderSett
     if (!transparent.empty()) {
         std::sort(transparent.begin(), transparent.end(), [](auto& a, auto& b) { return a.first > b.first; });
         glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
         glDepthMask(GL_FALSE);
         for (auto& t : transparent) {
             const GpuChunk& c = *t.second;
@@ -369,7 +369,7 @@ void Renderer::render(const Camera& cam, int width, int height, const RenderSett
         glUniformMatrix4fv(uLineViewProj_, 1, GL_FALSE, vp.m);
         glBindVertexArray(lineVao_);
         glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
         if (s.grid) {
             float g = s.darkBackground ? 1.0f : 0.0f;
             float gc[4] = {g, g, g, 0.12f};
