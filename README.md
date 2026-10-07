@@ -220,3 +220,9 @@ src/main.cpp             window, input, file handling (GLFW)
 android/                 Android app (Java UI + JNI bridge to the same engine)
 tests/make_samples.py    writes the same build in every format; check_samples.py cross-checks the loaders
 ```
+
+## Status: closed (2026-10)
+Part of **OpenSkyRPG**: my attempt (Aug–Sep 2026) at a deep 3D RPG of my own, after Morrowind felt antiquated and
+Skyrim felt wide as an ocean and deep as a puddle. This viewer rendered its worlds; it works on its own too.
+The project's answer: a Skyrim-scale RPG isn't buildable by one person + AI. Closed; not maintained. The world
+generation, GPU water and voxel viewing parts are reusable.
